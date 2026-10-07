@@ -107,6 +107,47 @@ class ProgressSchema(BaseModel):
     status: str
 
 
+class ProgressUpdateItem(BaseModel):
+    youtube_video_id: str
+    completed: bool
+    actual_seconds: Optional[int] = Field(None, ge=0, le=86400)
+
+
+class ProgressUpdateRequest(BaseModel):
+    updates: List[ProgressUpdateItem] = Field(..., max_length=200)
+
+
+class ProgressUpdateResponse(BaseModel):
+    progress: ProgressSchema
+
+
+class ReplanRequest(BaseModel):
+    hours_per_week: Optional[float] = Field(None, gt=0, le=120)
+    target_date: Optional[str] = None
+    start_date: Optional[str] = None
+    adaptive_pace: bool = True
+
+    @field_validator("start_date")
+    @classmethod
+    def validate_start_date(cls, v: Optional[str]) -> Optional[str]:
+        if v:
+            try:
+                date.fromisoformat(v)
+            except ValueError:
+                raise ValueError("start_date must be a valid ISO date YYYY-MM-DD")
+        return v
+
+    @field_validator("target_date")
+    @classmethod
+    def validate_target_date(cls, v: Optional[str]) -> Optional[str]:
+        if v:
+            try:
+                date.fromisoformat(v)
+            except ValueError:
+                raise ValueError("target_date must be a valid ISO date YYYY-MM-DD")
+        return v
+
+
 class PlanResponse(BaseModel):
     id: str
     playlist: PlaylistSummarySchema

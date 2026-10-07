@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.errors import AppError
 from app.models.entities import Plan, Playlist, Progress
 from app.services.scheduler import build_schedule
 
@@ -320,3 +321,116 @@ def format_plan_response(
         "weeks": schedule_copy.get("weeks", []),
         "progress": progress_info,
     }
+
+
+_UNSET = object()
+
+
+def replan(
+    db: Session,
+    plan: Plan,
+    hours_per_week: Optional[float] = None,
+    target_date: Any = _UNSET,
+    start_date: Optional[str] = None,
+    adaptive_pace: bool = True,
+    today_str: Optional[str] = None,
+) -> Plan:
+    """Replan remaining uncompleted videos starting from today."""
+    if today_str:
+        today_date_str = today_str
+    else:
+        today_date_str = datetime.now(timezone.utc).date().isoformat()
+
+    # 1. Collect completed and incomplete videos
+    completed_vids = {p.youtube_video_id for p in plan.progress_records if p.completed}
+    all_topic_vids = [vid for t in plan.topics_json for vid in t.get("video_ids", [])]
+    incomplete_vids = [vid for vid in all_topic_vids if vid not in completed_vids]
+
+    if not incomplete_vids:
+        raise AppError(
+            "PLAN_COMPLETE",
+            "All videos in this plan are already completed. Nothing left to replan.",
+            status_code=409,
+        )
+
+    # 2. Adaptive pace computation
+    new_pace_factor = plan.pace_factor
+    if adaptive_pace:
+        completed_with_actual = [
+            p for p in plan.progress_records
+            if p.completed and p.actual_seconds is not None and p.actual_seconds > 0
+        ]
+        if len(completed_with_actual) >= 3:
+            dur_map = {v.youtube_video_id: v.duration_seconds for v in plan.playlist.videos}
+            mult_map = {}
+            for t in plan.topics_json:
+                for vid in t["video_ids"]:
+                    mult_map[vid] = t["multiplier"]
+
+            sum_actual = sum(p.actual_seconds for p in completed_with_actual)
+            sum_estimated = sum(
+                dur_map.get(p.youtube_video_id, 0) * mult_map.get(p.youtube_video_id, 1.5)
+                for p in completed_with_actual
+            )
+            if sum_estimated > 0:
+                ratio = sum_actual / sum_estimated
+                new_pace_factor = round(max(0.5, min(2.0, ratio)), 2)
+
+    # 3. Build remaining topics (dropping empty topics)
+    dur_map = {v.youtube_video_id: v.duration_seconds for v in plan.playlist.videos}
+    remaining_topics: List[Dict[str, Any]] = []
+
+    for topic in plan.topics_json:
+        t_incomplete = [v for v in topic["video_ids"] if v not in completed_vids]
+        if not t_incomplete:
+            continue
+        mult = topic["multiplier"]
+        raw_seconds = sum(dur_map.get(v, 0) for v in t_incomplete)
+        remaining_effort = round(((raw_seconds / 3600.0) * mult) * new_pace_factor, 2)
+        remaining_topics.append({
+            "id": topic["id"],
+            "name": topic["name"],
+            "difficulty": topic["difficulty"],
+            "multiplier": mult,
+            "effort_hours": remaining_effort,
+            "video_ids": t_incomplete,
+            "video_count": len(t_incomplete),
+        })
+
+    # 4. Resolve settings
+    effective_start = start_date or today_date_str
+    effective_hpw = hours_per_week if hours_per_week is not None else plan.hours_per_week
+    effective_target = target_date if target_date is not _UNSET else plan.target_date
+
+    # 5. Build schedule and assign videos
+    videos_by_id = {
+        v.youtube_video_id: {
+            "title": v.title,
+            "duration_seconds": v.duration_seconds,
+            "thumbnail_url": v.thumbnail_url,
+        }
+        for v in plan.playlist.videos
+    }
+
+    schedule = build_schedule(
+        topics=remaining_topics,
+        hours_per_week=effective_hpw,
+        start_date=effective_start,
+        target_date=effective_target,
+    )
+    schedule_with_videos = assign_videos_to_weeks(remaining_topics, schedule, videos_by_id)
+
+    # 6. Update plan
+    plan.hours_per_week = effective_hpw
+    plan.start_date = effective_start
+    plan.target_date = effective_target
+    plan.schedule_json = schedule_with_videos
+    plan.feasible = schedule["feasible"]
+    plan.required_hours_per_week = schedule["required_hours_per_week"]
+    plan.pace_factor = new_pace_factor
+    plan.replan_count += 1
+    plan.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(plan)
+    return plan
