@@ -103,8 +103,13 @@ def create_app() -> FastAPI:
     async def health_check():
         return {"status": "ok"}
 
+    from app.api.analyze import router as analyze_router
+    from app.api.plans import router as plans_router
     from app.api.playlists import router as playlists_router
+
     app.include_router(playlists_router)
+    app.include_router(analyze_router)
+    app.include_router(plans_router)
 
     return app
 

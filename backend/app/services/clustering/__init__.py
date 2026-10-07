@@ -53,8 +53,6 @@ def get_or_create_clustering(
         for v in playlist.videos
     ]
 
-    client = llm_client or get_llm_client()
-
     topics: List[Dict[str, Any]]
     method_used: str
 
@@ -62,19 +60,31 @@ def get_or_create_clustering(
         topics = cluster_with_embeddings(videos_dicts)
         method_used = "embeddings"
     elif chosen_method == "hybrid":
-        topics, method_used = cluster_hybrid(
-            videos=videos_dicts,
-            playlist_title=playlist.title,
-            channel_title=playlist.channel_title,
-            client=client,
-        )
+        try:
+            client = llm_client or get_llm_client()
+            topics, method_used = cluster_hybrid(
+                videos=videos_dicts,
+                playlist_title=playlist.title,
+                channel_title=playlist.channel_title,
+                client=client,
+            )
+        except Exception as e:
+            logger.warning("Hybrid clustering failed to initialize LLM (%s), using embeddings.", e)
+            topics = cluster_with_embeddings(videos_dicts)
+            method_used = "embeddings"
     else:  # llm
-        topics, method_used = cluster_with_llm(
-            videos=videos_dicts,
-            playlist_title=playlist.title,
-            channel_title=playlist.channel_title,
-            client=client,
-        )
+        try:
+            client = llm_client or get_llm_client()
+            topics, method_used = cluster_with_llm(
+                videos=videos_dicts,
+                playlist_title=playlist.title,
+                channel_title=playlist.channel_title,
+                client=client,
+            )
+        except Exception as e:
+            logger.warning("LLM clustering failed to initialize LLM (%s), using embeddings.", e)
+            topics = cluster_with_embeddings(videos_dicts)
+            method_used = "embeddings"
 
     clustering_record = Clustering(
         playlist_id=playlist.id,

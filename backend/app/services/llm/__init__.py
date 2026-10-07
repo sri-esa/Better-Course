@@ -9,7 +9,7 @@ def get_llm_client() -> LLMClient:
     settings = get_settings()
     provider = settings.LLM_PROVIDER.lower()
 
-    if provider == "fake":
+    if provider == "fake" or settings.TESTING or settings.ENVIRONMENT == "test" or not settings.LLM_API_KEY:
         return FakeLLMClient()
     elif provider == "gemini":
         return GeminiLLMClient()
