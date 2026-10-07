@@ -5,17 +5,14 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.config import get_settings
 from app.errors import AppError
+from app.limiter import limiter
 
 logger = logging.getLogger("studyflow")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-
-limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -31,6 +28,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    import uuid
     settings = get_settings()
 
     app = FastAPI(
@@ -40,6 +38,15 @@ def create_app() -> FastAPI:
     )
 
     app.state.limiter = limiter
+
+    # Request ID and structured logging middleware
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next):
+        req_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = req_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
+        return response
 
     # CORS
     app.add_middleware(

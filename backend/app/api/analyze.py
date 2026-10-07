@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db
 from app.errors import AppError
+from app.limiter import limiter
 from app.schemas.plan import AnalyzeRequest, PlanResponse
 from app.services.clustering import get_or_create_clustering
 from app.services.effort import build_topics
@@ -18,6 +19,7 @@ settings = get_settings()
 
 
 @router.post("", response_model=PlanResponse, status_code=201)
+@limiter.limit(settings.RATE_LIMIT_ANALYZE)
 def analyze_playlist(
     request: Request,
     req: AnalyzeRequest,

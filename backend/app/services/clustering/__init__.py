@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -94,9 +95,20 @@ def get_or_create_clustering(
         result_json={"topics": topics},
     )
     db.add(clustering_record)
-    db.commit()
-    db.refresh(clustering_record)
-    return clustering_record
+    try:
+        db.commit()
+        db.refresh(clustering_record)
+        return clustering_record
+    except IntegrityError:
+        db.rollback()
+        concurrent_record = (
+            db.query(Clustering)
+            .filter_by(playlist_id=playlist.id, method=chosen_method, videos_hash=v_hash)
+            .first()
+        )
+        if concurrent_record:
+            return concurrent_record
+        raise
 
 
 __all__ = [

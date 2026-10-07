@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -429,6 +430,13 @@ def get_or_fetch_playlist(
             )
             db.add(video_row)
 
-        db.commit()
-        db.refresh(new_playlist)
-        return new_playlist
+        try:
+            db.commit()
+            db.refresh(new_playlist)
+            return new_playlist
+        except IntegrityError:
+            db.rollback()
+            concurrent_pl = db.query(Playlist).filter_by(youtube_playlist_id=playlist_id).first()
+            if concurrent_pl:
+                return concurrent_pl
+            raise
