@@ -18,6 +18,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    try:
+        from app.db import engine
+        from app.models.entities import Base
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        logger.warning("Could not auto-create tables: %s", e)
+
     # In non-testing environments, validate configuration
     if not settings.TESTING and settings.ENVIRONMENT != "test":
         try:
