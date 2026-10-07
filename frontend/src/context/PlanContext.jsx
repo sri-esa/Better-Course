@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react'
+import { replanPlan, updateProgress } from '../api/studyflowApi'
 
 const PlanContext = createContext(null)
 const STORAGE_KEY = 'syllabify-state'
@@ -36,14 +37,35 @@ export function PlanProvider({ children }) {
     setCompleted([])
   }
 
-  function toggleVideo(id) {
+  function toggleVideo(id, actualSeconds = null) {
+    const isNowDone = !completed.includes(id)
     setCompleted((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      isNowDone ? [...prev, id] : prev.filter((x) => x !== id)
     )
+
+    // Optimistically sync to backend if plan exists on server
+    if (plan?.id) {
+      updateProgress(plan.id, [
+        {
+          youtube_video_id: id,
+          completed: isNowDone,
+          actual_seconds: actualSeconds,
+        },
+      ]).catch((err) => {
+        console.error('Progress sync error:', err)
+      })
+    }
+  }
+
+  async function triggerReplan(options = {}) {
+    if (!plan?.id) return
+    const updated = await replanPlan(plan.id, options)
+    setPlan(updated)
+    return updated
   }
 
   return (
-    <PlanContext.Provider value={{ plan, completed, savePlan, toggleVideo }}>
+    <PlanContext.Provider value={{ plan, completed, savePlan, toggleVideo, triggerReplan }}>
       {children}
     </PlanContext.Provider>
   )
