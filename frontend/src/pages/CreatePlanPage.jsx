@@ -46,7 +46,7 @@ export default function CreatePlanPage() {
     }, 700);
 
     try {
-      const response = await fetch('/api/playlists/analyze', {
+      const response = await fetch('https://syllabify-backend.onrender.com/api/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -54,8 +54,7 @@ export default function CreatePlanPage() {
         body: JSON.stringify({
           playlist_url: playlistUrl,
           hours_per_week: Number(hoursPerWeek),
-          target_date: targetDate,
-          study_intensity: intensity,
+          target_date: targetDate || null,
         }),
       });
 
