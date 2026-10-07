@@ -2,7 +2,21 @@ import { buildSamplePlan } from '../data/samplePlan'
 import { todayISO } from '../utils/format'
 
 // Backend API configuration
-const API_URL = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+const getApiUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL
+  if (envUrl) return envUrl.replace(/\/$/, '')
+  if (
+    typeof window !== 'undefined' &&
+    window.location.hostname &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1'
+  ) {
+    return 'https://syllabify-backend.onrender.com'
+  }
+  return ''
+}
+
+const API_URL = getApiUrl()
 const USE_MOCK = import.meta.env.VITE_USE_MOCKS === 'true'
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))

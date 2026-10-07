@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     YOUTUBE_API_KEY: str = ""
     DATABASE_URL: str = "sqlite:///./studyflow.db"
-    CORS_ORIGINS: str = "http://localhost:5173"
+    CORS_ORIGINS: str = "http://localhost:5173,https://syllabify-two.vercel.app"
     LLM_PROVIDER: str = "gemini"
     LLM_API_KEY: str | None = None
     LLM_MODEL: str | None = None
