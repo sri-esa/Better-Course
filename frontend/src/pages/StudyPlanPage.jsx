@@ -25,9 +25,9 @@ export default function StudyPlanPage() {
   const fetchPlan = async () => {
     try {
       setLoading(true);
-      const url = playlistId === 'latest' 
-        ? '/api/plans/latest/current' 
-        : `/api/plans/${playlistId}`;
+      const url = playlistId === 'latest'
+        ? 'https://syllabify-backend.onrender.com/api/plans/latest/current'
+        : `https://syllabify-backend.onrender.com/api/plans/${playlistId}`;
       
       const res = await fetch(url);
       if (!res.ok) {
@@ -68,13 +68,13 @@ export default function StudyPlanPage() {
     setPlan(updatedPlan);
 
     try {
-      await fetch(`/api/progress/${videoId}`, {
+      await fetch(`https://syllabify-backend.onrender.com/api/progress/${videoId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed: !currentCompleted })
       });
       // Refresh to keep calculations synced
-      const res = await fetch(`/api/plans/${plan.id}`);
+      const res = await fetch(`https://syllabify-backend.onrender.com/api/plans/${plan.id}`);
       if (res.ok) {
         const fresh = await res.json();
         setPlan(fresh);
@@ -89,7 +89,7 @@ export default function StudyPlanPage() {
     if (!plan) return;
     setIsReplanning(true);
     try {
-      const res = await fetch(`/api/plans/${plan.id}/replan`, {
+      const res = await fetch(`https://syllabify-backend.onrender.com/api/plans/${plan.id}/replan`, {
         method: 'POST'
       });
       if (!res.ok) throw new Error('Replanning failed.');
