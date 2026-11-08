@@ -1,4 +1,6 @@
+
 import logging
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -10,32 +12,44 @@ from slowapi.errors import RateLimitExceeded
 from app.config import get_settings
 from app.errors import AppError
 from app.limiter import limiter
+from app.mongo import close_mongodb, connect_to_mongodb
 
 logger = logging.getLogger("studyflow")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    try:
-        from app.db import engine
-        from app.models.entities import Base
-        Base.metadata.create_all(bind=engine)
-    except Exception as e:
-        logger.warning("Could not auto-create tables: %s", e)
+    mongodb_connected = False
 
-    # In non-testing environments, validate configuration
-    if not settings.TESTING and settings.ENVIRONMENT != "test":
-        try:
-            settings.check_required_keys()
-        except ValueError as e:
-            logger.warning("Configuration warning on startup: %s", e)
-    yield
+    try:
+        # Connect to MongoDB outside test environments.
+        if not settings.TESTING and settings.ENVIRONMENT != "test":
+            database = connect_to_mongodb()
+            app.state.database = database
+            mongodb_connected = True
+            logger.info("Successfully connected to MongoDB.")
+
+        # Validate application configuration.
+        if not settings.TESTING and settings.ENVIRONMENT != "test":
+            try:
+                settings.check_required_keys()
+            except ValueError as e:
+                logger.warning("Configuration warning on startup: %s", e)
+
+        yield
+
+    finally:
+        if mongodb_connected:
+            close_mongodb()
+            logger.info("MongoDB connection closed.")
 
 
 def create_app() -> FastAPI:
-    import uuid
     settings = get_settings()
 
     app = FastAPI(
@@ -46,16 +60,18 @@ def create_app() -> FastAPI:
 
     app.state.limiter = limiter
 
-    # Request ID and structured logging middleware
+    # Request ID and structured logging middleware.
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):
-        req_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-        request.state.request_id = req_id
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = request_id
+
         response = await call_next(request)
-        response.headers["X-Request-ID"] = req_id
+        response.headers["X-Request-ID"] = request_id
+
         return response
 
-    # CORS
+    # CORS configuration.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
@@ -64,7 +80,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Error Handlers
+    # Application error handler.
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError):
         return JSONResponse(
@@ -72,8 +88,12 @@ def create_app() -> FastAPI:
             content=exc.to_dict(),
         )
 
+    # Request validation error handler.
     @app.exception_handler(RequestValidationError)
-    async def validation_error_handler(request: Request, exc: RequestValidationError):
+    async def validation_error_handler(
+        request: Request,
+        exc: RequestValidationError,
+    ):
         return JSONResponse(
             status_code=422,
             content={
@@ -85,6 +105,7 @@ def create_app() -> FastAPI:
             },
         )
 
+    # Rate limit error handler.
     @app.exception_handler(RateLimitExceeded)
     async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         return JSONResponse(
@@ -98,9 +119,11 @@ def create_app() -> FastAPI:
             },
         )
 
+    # Unexpected error handler.
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
         logger.exception("Unhandled server error: %s", exc)
+
         return JSONResponse(
             status_code=500,
             content={
@@ -112,11 +135,37 @@ def create_app() -> FastAPI:
             },
         )
 
-    # Health check route
+    # Health check.
     @app.get("/api/health")
     async def health_check():
-        return {"status": "ok"}
+        if settings.TESTING or settings.ENVIRONMENT == "test":
+            return {"status": "ok"}
 
+        try:
+            database = getattr(app.state, "database", None)
+
+            if database is None:
+                raise RuntimeError("MongoDB is not connected.")
+
+            database.command("ping")
+
+            return {
+                "status": "ok",
+                "database": "connected",
+            }
+
+        except Exception:
+            logger.exception("MongoDB health check failed.")
+
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "degraded",
+                    "database": "unavailable",
+                },
+            )
+
+    # API routes.
     from app.api.analyze import router as analyze_router
     from app.api.plans import router as plans_router
     from app.api.playlists import router as playlists_router

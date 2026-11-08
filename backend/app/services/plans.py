@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import copy
@@ -6,13 +7,120 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 
 from app.errors import AppError
-from app.models.entities import Plan, Playlist, Progress
+from app.models.documents import Plan, Playlist, Progress, Video
 from app.services.scheduler import build_schedule
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------
+# MongoDB document conversion helpers
+# ---------------------------------------------------------------------
+
+
+def _ensure_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Ensure MongoDB timestamps are timezone-aware UTC."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _playlist_from_document(
+    db: Database,
+    document: Dict[str, Any],
+) -> Playlist:
+    """Convert a MongoDB playlist document and its videos into a Playlist."""
+
+    videos = [
+        Video(
+            playlist_id=str(video["playlist_id"]),
+            youtube_video_id=video["youtube_video_id"],
+            position=video["position"],
+            title=video["title"],
+            description=video.get("description", ""),
+            duration_seconds=video["duration_seconds"],
+            thumbnail_url=video.get("thumbnail_url"),
+        )
+        for video in db.videos.find(
+            {"playlist_id": str(document["_id"])}
+        ).sort("position", 1)
+    ]
+
+    return Playlist(
+        id=str(document["_id"]),
+        youtube_playlist_id=document["youtube_playlist_id"],
+        title=document["title"],
+        channel_title=document["channel_title"],
+        video_count=document["video_count"],
+        total_seconds=document["total_seconds"],
+        warnings=document.get("warnings", []),
+        fetched_at=_ensure_utc(document["fetched_at"]),
+        videos=videos,
+    )
+
+
+def _load_plan(db: Database, plan_id: str) -> Plan:
+    """Load a plan along with its playlist, videos and progress records."""
+
+    document = db.plans.find_one({"_id": plan_id})
+
+    if not document:
+        raise AppError(
+            "PLAN_NOT_FOUND",
+            f"Plan with ID '{plan_id}' not found.",
+            status_code=404,
+        )
+
+    playlist_document = db.playlists.find_one(
+        {"_id": document["playlist_id"]}
+    )
+
+    if not playlist_document:
+        raise AppError(
+            "PLAYLIST_NOT_FOUND",
+            "The playlist associated with this plan could not be found.",
+            status_code=404,
+        )
+
+    playlist = _playlist_from_document(db, playlist_document)
+
+    progress_records = [
+        Progress(
+            plan_id=record["plan_id"],
+            youtube_video_id=record["youtube_video_id"],
+            completed=record.get("completed", False),
+            completed_at=_ensure_utc(record.get("completed_at")),
+            actual_seconds=record.get("actual_seconds"),
+        )
+        for record in db.progress.find({"plan_id": plan_id})
+    ]
+
+    return Plan(
+        id=str(document["_id"]),
+        playlist_id=document["playlist_id"],
+        hours_per_week=document["hours_per_week"],
+        start_date=document["start_date"],
+        target_date=document.get("target_date"),
+        topics_json=document["topics_json"],
+        schedule_json=document["schedule_json"],
+        feasible=document["feasible"],
+        required_hours_per_week=document.get("required_hours_per_week"),
+        pace_factor=document.get("pace_factor", 1.0),
+        replan_count=document.get("replan_count", 0),
+        clustering_method_used=document["clustering_method_used"],
+        created_at=_ensure_utc(document.get("created_at")),
+        updated_at=_ensure_utc(document.get("updated_at")),
+        playlist=playlist,
+        progress_records=progress_records,
+    )
+
+
+# ---------------------------------------------------------------------
+# Video assignment
+# ---------------------------------------------------------------------
 
 
 def assign_videos_to_weeks(
@@ -20,87 +128,96 @@ def assign_videos_to_weeks(
     schedule: Dict[str, Any],
     videos_by_id: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Assign videos to weekly chunks based on video cumulative effort offsets
+    """Assign videos to weekly chunks based on cumulative effort."""
 
-    and chunk hour boundaries.
-    """
     updated_schedule = copy.deepcopy(schedule)
 
-    # 1. Map each topic to its schedule occurrences/chunks in chronological order
-    # item in week["topics"]: {"topic_id": int, "name": str, "hours": float, "part": int, "total_parts": int}
+    # Map each topic to its schedule occurrences in chronological order.
     topic_chunks: Dict[int, List[Dict[str, Any]]] = {}
-    for w in updated_schedule.get("weeks", []):
-        for item in w.get("topics", []):
-            tid = item["topic_id"]
-            if tid not in topic_chunks:
-                topic_chunks[tid] = []
-            topic_chunks[tid].append(item)
 
-    # 2. Assign videos per topic
+    for week in updated_schedule.get("weeks", []):
+        for item in week.get("topics", []):
+            topic_id = item["topic_id"]
+            topic_chunks.setdefault(topic_id, []).append(item)
+
+    # Assign videos to each topic.
     for topic in topics:
-        tid = topic["id"]
-        mult = topic["multiplier"]
-        v_ids = topic["video_ids"]
-        chunks = topic_chunks.get(tid, [])
+        topic_id = topic["id"]
+        multiplier = topic["multiplier"]
+        video_ids = topic["video_ids"]
+
+        chunks = topic_chunks.get(topic_id, [])
 
         if not chunks:
             continue
 
+        # If the topic fits into one chunk, assign every video there.
         if len(chunks) == 1:
-            # Unsplit topic: all videos go to this chunk
             chunks[0]["videos"] = [
                 {
-                    "youtube_video_id": vid,
-                    "title": videos_by_id[vid]["title"],
-                    "duration_seconds": videos_by_id[vid]["duration_seconds"],
-                    "thumbnail_url": videos_by_id[vid].get("thumbnail_url"),
+                    "youtube_video_id": video_id,
+                    "title": videos_by_id[video_id]["title"],
+                    "duration_seconds": videos_by_id[video_id]["duration_seconds"],
+                    "thumbnail_url": videos_by_id[video_id].get("thumbnail_url"),
                     "completed": False,
                 }
-                for vid in v_ids
-                if vid in videos_by_id
+                for video_id in video_ids
+                if video_id in videos_by_id
             ]
             continue
 
-        # Spilled topic across multiple weeks/chunks
-        # Cumulative chunk boundaries in effort hours
+        # Calculate cumulative chunk boundaries.
         chunk_boundaries: List[float] = []
-        accum = 0.0
-        for ch in chunks:
-            accum += ch["hours"]
-            chunk_boundaries.append(accum)
+        accumulated = 0.0
 
-        # Initialize video list for each chunk
-        for ch in chunks:
-            ch["videos"] = []
+        for chunk in chunks:
+            accumulated += chunk["hours"]
+            chunk_boundaries.append(accumulated)
 
-        curr_effort_offset = 0.0
-        for vid in v_ids:
-            v_data = videos_by_id.get(vid)
-            if not v_data:
+        for chunk in chunks:
+            chunk["videos"] = []
+
+        current_effort_offset = 0.0
+
+        for video_id in video_ids:
+            video_data = videos_by_id.get(video_id)
+
+            if not video_data:
                 continue
 
-            v_effort = (v_data["duration_seconds"] / 3600.0) * mult
-            # Find which chunk covers curr_effort_offset
-            assigned_chunk_idx = len(chunks) - 1  # default to last chunk
-            for idx, boundary in enumerate(chunk_boundaries[:-1]):
-                if curr_effort_offset < boundary - 1e-6:
-                    assigned_chunk_idx = idx
+            video_effort = (
+                video_data["duration_seconds"] / 3600.0
+            ) * multiplier
+
+            assigned_chunk_index = len(chunks) - 1
+
+            for index, boundary in enumerate(chunk_boundaries[:-1]):
+                if current_effort_offset < boundary - 1e-6:
+                    assigned_chunk_index = index
                     break
 
-            chunks[assigned_chunk_idx]["videos"].append({
-                "youtube_video_id": vid,
-                "title": v_data["title"],
-                "duration_seconds": v_data["duration_seconds"],
-                "thumbnail_url": v_data.get("thumbnail_url"),
-                "completed": False,
-            })
-            curr_effort_offset += v_effort
+            chunks[assigned_chunk_index]["videos"].append(
+                {
+                    "youtube_video_id": video_id,
+                    "title": video_data["title"],
+                    "duration_seconds": video_data["duration_seconds"],
+                    "thumbnail_url": video_data.get("thumbnail_url"),
+                    "completed": False,
+                }
+            )
+
+            current_effort_offset += video_effort
 
     return updated_schedule
 
 
+# ---------------------------------------------------------------------
+# Create plan
+# ---------------------------------------------------------------------
+
+
 def create_plan(
-    db: Session,
+    db: Database,
     playlist: Playlist,
     clustering_method_used: str,
     topics_json: List[Dict[str, Any]],
@@ -108,18 +225,17 @@ def create_plan(
     start_date: str,
     target_date: Optional[str] = None,
 ) -> Plan:
-    """Orchestrate schedule generation, video assignment, and persistence."""
-    # 1. Build video lookup dictionary
+    """Generate a study schedule and save the plan in MongoDB."""
+
     videos_by_id = {
-        v.youtube_video_id: {
-            "title": v.title,
-            "duration_seconds": v.duration_seconds,
-            "thumbnail_url": v.thumbnail_url,
+        video.youtube_video_id: {
+            "title": video.title,
+            "duration_seconds": video.duration_seconds,
+            "thumbnail_url": video.thumbnail_url,
         }
-        for v in playlist.videos
+        for video in playlist.videos
     }
 
-    # 2. Call scheduler
     schedule = build_schedule(
         topics=topics_json,
         hours_per_week=hours_per_week,
@@ -127,33 +243,40 @@ def create_plan(
         target_date=target_date,
     )
 
-    # 3. Assign concrete videos to weekly chunks
-    schedule_with_videos = assign_videos_to_weeks(topics_json, schedule, videos_by_id)
+    schedule_with_videos = assign_videos_to_weeks(
+        topics_json,
+        schedule,
+        videos_by_id,
+    )
 
-    # 4. Persist Plan
     plan_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
-    plan = Plan(
-        id=plan_id,
-        playlist_id=playlist.id,
-        hours_per_week=hours_per_week,
-        start_date=start_date,
-        target_date=target_date,
-        topics_json=topics_json,
-        schedule_json=schedule_with_videos,
-        feasible=schedule["feasible"],
-        required_hours_per_week=schedule["required_hours_per_week"],
-        pace_factor=1.0,
-        replan_count=0,
-        clustering_method_used=clustering_method_used,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(plan)
-    db.commit()
-    db.refresh(plan)
-    return plan
+    plan_document = {
+        "_id": plan_id,
+        "playlist_id": playlist.id,
+        "hours_per_week": hours_per_week,
+        "start_date": start_date,
+        "target_date": target_date,
+        "topics_json": topics_json,
+        "schedule_json": schedule_with_videos,
+        "feasible": schedule["feasible"],
+        "required_hours_per_week": schedule["required_hours_per_week"],
+        "pace_factor": 1.0,
+        "replan_count": 0,
+        "clustering_method_used": clustering_method_used,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    db.plans.insert_one(plan_document)
+
+    return _load_plan(db, plan_id)
+
+
+# ---------------------------------------------------------------------
+# Progress calculation
+# ---------------------------------------------------------------------
 
 
 def compute_progress(
@@ -162,6 +285,7 @@ def compute_progress(
     today_str: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Calculate effort-weighted completion and on-track / behind status."""
+
     if today_str:
         today = date.fromisoformat(today_str)
     else:
@@ -169,79 +293,107 @@ def compute_progress(
 
     start_date = date.fromisoformat(plan.start_date)
 
-    # Map video_id to completed state
-    completed_map = {p.youtube_video_id: p for p in progress_rows if p.completed}
+    completed_map = {
+        progress.youtube_video_id: progress
+        for progress in progress_rows
+        if progress.completed
+    }
 
-    # Video multiplier lookup from topics_json
-    vid_to_mult: Dict[str, float] = {}
-    vid_to_duration: Dict[str, int] = {}
+    video_multipliers: Dict[str, float] = {}
+    video_durations: Dict[str, int] = {}
+
     total_videos_count = 0
 
-    # Build lookup from playlist videos or topics
     if plan.playlist and plan.playlist.videos:
-        for v in plan.playlist.videos:
-            vid_to_duration[v.youtube_video_id] = v.duration_seconds
+        for video in plan.playlist.videos:
+            video_durations[video.youtube_video_id] = video.duration_seconds
+
         total_videos_count = len(plan.playlist.videos)
 
     for topic in plan.topics_json:
-        mult = topic.get("multiplier", 1.5)
-        for vid in topic.get("video_ids", []):
-            vid_to_mult[vid] = mult
+        multiplier = topic.get("multiplier", 1.5)
 
-    total_effort_hours = sum(t.get("effort_hours", 0.0) for t in plan.topics_json)
+        for video_id in topic.get("video_ids", []):
+            video_multipliers[video_id] = multiplier
+
+    total_effort_hours = sum(
+        topic.get("effort_hours", 0.0)
+        for topic in plan.topics_json
+    )
 
     completed_videos_count = len(completed_map)
     completed_effort_hours = 0.0
 
-    for vid in completed_map:
-        dur = vid_to_duration.get(vid, 0)
-        mult = vid_to_mult.get(vid, 1.5)
-        completed_effort_hours += (dur / 3600.0) * mult
+    for video_id in completed_map:
+        duration = video_durations.get(video_id, 0)
+        multiplier = video_multipliers.get(video_id, 1.5)
+
+        completed_effort_hours += (
+            duration / 3600.0
+        ) * multiplier
 
     completed_effort_hours = round(completed_effort_hours, 2)
 
     percent_complete = 0.0
-    if total_effort_hours > 0:
-        percent_complete = round(min(100.0, (completed_effort_hours / total_effort_hours) * 100.0), 1)
 
-    # Planned effort hours to date
+    if total_effort_hours > 0:
+        percent_complete = round(
+            min(
+                100.0,
+                (completed_effort_hours / total_effort_hours) * 100.0,
+            ),
+            1,
+        )
+
+    # Calculate planned effort hours to date.
     planned_effort_hours_to_date = 0.0
     weeks = plan.schedule_json.get("weeks", [])
 
-    for w in weeks:
-        w_start = date.fromisoformat(w["start"])
-        w_end = date.fromisoformat(w["end"])
-        w_hours = float(w.get("hours", 0.0))
+    for week in weeks:
+        week_start = date.fromisoformat(week["start"])
+        week_end = date.fromisoformat(week["end"])
+        week_hours = float(week.get("hours", 0.0))
 
-        if w_end < today:
-            # Past week: fully planned
-            planned_effort_hours_to_date += w_hours
-        elif w_start <= today <= w_end:
-            # Current active week: scale by elapsed days
-            total_days = (w_end - w_start).days + 1
-            elapsed_days = (today - w_start).days + 1
-            fraction = min(1.0, max(0.0, elapsed_days / total_days))
-            planned_effort_hours_to_date += w_hours * fraction
-        else:
-            # Future week
-            pass
+        if week_end < today:
+            planned_effort_hours_to_date += week_hours
 
-    planned_effort_hours_to_date = round(planned_effort_hours_to_date, 2)
+        elif week_start <= today <= week_end:
+            total_days = (week_end - week_start).days + 1
+            elapsed_days = (today - week_start).days + 1
 
-    # Status determination
+            fraction = min(
+                1.0,
+                max(0.0, elapsed_days / total_days),
+            )
+
+            planned_effort_hours_to_date += week_hours * fraction
+
+    planned_effort_hours_to_date = round(
+        planned_effort_hours_to_date,
+        2,
+    )
+
+    # Determine progress status.
     if today < start_date:
         status = "not_started"
-    elif total_videos_count > 0 and completed_videos_count == total_videos_count:
+
+    elif (
+        total_videos_count > 0
+        and completed_videos_count == total_videos_count
+    ):
         status = "complete"
+
+    elif planned_effort_hours_to_date <= 0.01:
+        status = "on_track"
+
+    elif completed_effort_hours > planned_effort_hours_to_date * 1.10:
+        status = "ahead"
+
+    elif completed_effort_hours < planned_effort_hours_to_date * 0.90:
+        status = "behind"
+
     else:
-        if planned_effort_hours_to_date <= 0.01:
-            status = "on_track"
-        elif completed_effort_hours > planned_effort_hours_to_date * 1.10:
-            status = "ahead"
-        elif completed_effort_hours < planned_effort_hours_to_date * 0.90:
-            status = "behind"
-        else:
-            status = "on_track"
+        status = "on_track"
 
     return {
         "completed_videos": completed_videos_count,
@@ -253,44 +405,71 @@ def compute_progress(
     }
 
 
+# ---------------------------------------------------------------------
+# Format API response
+# ---------------------------------------------------------------------
+
+
 def format_plan_response(
     plan: Plan,
     today_str: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Format full Plan response matching Section 10 specification."""
-    progress_info = compute_progress(plan, plan.progress_records, today_str)
+    """Format the complete plan response for the existing frontend."""
 
-    # Merge completed flags into schedule_json weeks
-    completed_set = {p.youtube_video_id for p in plan.progress_records if p.completed}
-    schedule_copy = copy.deepcopy(plan.schedule_json)
-    for w in schedule_copy.get("weeks", []):
-        for t in w.get("topics", []):
-            for v in t.get("videos", []):
-                v["completed"] = v["youtube_video_id"] in completed_set
+    progress_info = compute_progress(
+        plan,
+        plan.progress_records,
+        today_str,
+    )
 
-    # Format playlist summary
-    pl = plan.playlist
-    pl_data = {
-        "youtube_playlist_id": pl.youtube_playlist_id,
-        "title": pl.title,
-        "channel_title": pl.channel_title,
-        "video_count": pl.video_count,
-        "total_watch_hours": round(pl.total_seconds / 3600.0, 1),
-        "warnings": pl.warnings or [],
+    completed_set = {
+        progress.youtube_video_id
+        for progress in plan.progress_records
+        if progress.completed
     }
 
-    # Format settings
+    schedule_copy = copy.deepcopy(plan.schedule_json)
+
+    for week in schedule_copy.get("weeks", []):
+        for topic in week.get("topics", []):
+            for video in topic.get("videos", []):
+                video["completed"] = (
+                    video["youtube_video_id"] in completed_set
+                )
+
+    playlist = plan.playlist
+
+    playlist_data = {
+        "youtube_playlist_id": playlist.youtube_playlist_id,
+        "title": playlist.title,
+        "channel_title": playlist.channel_title,
+        "video_count": playlist.video_count,
+        "total_watch_hours": round(
+            playlist.total_seconds / 3600.0,
+            1,
+        ),
+        "warnings": playlist.warnings or [],
+    }
+
     settings_data = {
         "hours_per_week": plan.hours_per_week,
         "start_date": plan.start_date,
         "target_date": plan.target_date,
     }
 
-    # Format summary
     summary_data = {
-        "total_effort_hours": round(sum(t.get("effort_hours", 0.0) for t in plan.topics_json), 2),
+        "total_effort_hours": round(
+            sum(
+                topic.get("effort_hours", 0.0)
+                for topic in plan.topics_json
+            ),
+            2,
+        ),
         "num_topics": len(plan.topics_json),
-        "num_weeks": schedule_copy.get("num_weeks", len(schedule_copy.get("weeks", []))),
+        "num_weeks": schedule_copy.get(
+            "num_weeks",
+            len(schedule_copy.get("weeks", [])),
+        ),
         "completion_date": schedule_copy.get("completion_date"),
         "feasible": plan.feasible,
         "required_hours_per_week": plan.required_hours_per_week,
@@ -299,21 +478,23 @@ def format_plan_response(
         "clustering_method_used": plan.clustering_method_used,
     }
 
-    # Format topics summary list
     topics_data = [
         {
-            "id": t["id"],
-            "name": t["name"],
-            "difficulty": t["difficulty"],
-            "effort_hours": t["effort_hours"],
-            "video_count": t.get("video_count", len(t.get("video_ids", []))),
+            "id": topic["id"],
+            "name": topic["name"],
+            "difficulty": topic["difficulty"],
+            "effort_hours": topic["effort_hours"],
+            "video_count": topic.get(
+                "video_count",
+                len(topic.get("video_ids", [])),
+            ),
         }
-        for t in plan.topics_json
+        for topic in plan.topics_json
     ]
 
     return {
         "id": plan.id,
-        "playlist": pl_data,
+        "playlist": playlist_data,
         "settings": settings_data,
         "summary": summary_data,
         "topics": topics_data,
@@ -323,11 +504,17 @@ def format_plan_response(
     }
 
 
+# Used to distinguish an omitted target_date from an explicit null.
 _UNSET = object()
 
 
+# ---------------------------------------------------------------------
+# Replan
+# ---------------------------------------------------------------------
+
+
 def replan(
-    db: Session,
+    db: Database,
     plan: Plan,
     hours_per_week: Optional[float] = None,
     target_date: Any = _UNSET,
@@ -335,93 +522,171 @@ def replan(
     adaptive_pace: bool = True,
     today_str: Optional[str] = None,
 ) -> Plan:
-    """Replan remaining uncompleted videos starting from today."""
+    """Replan remaining uncompleted videos and persist changes in MongoDB."""
+
     if today_str:
         today_date_str = today_str
     else:
         today_date_str = datetime.now(timezone.utc).date().isoformat()
 
-    # 1. Collect completed and incomplete videos
-    completed_vids = {p.youtube_video_id for p in plan.progress_records if p.completed}
-    all_topic_vids = [vid for t in plan.topics_json for vid in t.get("video_ids", [])]
-    incomplete_vids = [vid for vid in all_topic_vids if vid not in completed_vids]
+    # 1. Collect completed and incomplete videos.
+    completed_videos = {
+        progress.youtube_video_id
+        for progress in plan.progress_records
+        if progress.completed
+    }
 
-    if not incomplete_vids:
+    all_topic_videos = [
+        video_id
+        for topic in plan.topics_json
+        for video_id in topic.get("video_ids", [])
+    ]
+
+    incomplete_videos = [
+        video_id
+        for video_id in all_topic_videos
+        if video_id not in completed_videos
+    ]
+
+    if not incomplete_videos:
         raise AppError(
             "PLAN_COMPLETE",
             "All videos in this plan are already completed. Nothing left to replan.",
             status_code=409,
         )
 
-    # 2. Adaptive pace computation
+    # 2. Adaptive pace computation.
     new_pace_factor = plan.pace_factor
+
     if adaptive_pace:
         completed_with_actual = [
-            p for p in plan.progress_records
-            if p.completed and p.actual_seconds is not None and p.actual_seconds > 0
-        ]
-        if len(completed_with_actual) >= 3:
-            dur_map = {v.youtube_video_id: v.duration_seconds for v in plan.playlist.videos}
-            mult_map = {}
-            for t in plan.topics_json:
-                for vid in t["video_ids"]:
-                    mult_map[vid] = t["multiplier"]
-
-            sum_actual = sum(p.actual_seconds for p in completed_with_actual)
-            sum_estimated = sum(
-                dur_map.get(p.youtube_video_id, 0) * mult_map.get(p.youtube_video_id, 1.5)
-                for p in completed_with_actual
+            progress
+            for progress in plan.progress_records
+            if (
+                progress.completed
+                and progress.actual_seconds is not None
+                and progress.actual_seconds > 0
             )
-            if sum_estimated > 0:
-                ratio = sum_actual / sum_estimated
-                new_pace_factor = round(max(0.5, min(2.0, ratio)), 2)
+        ]
 
-    # 3. Build remaining topics (dropping empty topics)
-    dur_map = {v.youtube_video_id: v.duration_seconds for v in plan.playlist.videos}
+        if len(completed_with_actual) >= 3:
+            duration_map = {
+                video.youtube_video_id: video.duration_seconds
+                for video in plan.playlist.videos
+            }
+
+            multiplier_map: Dict[str, float] = {}
+
+            for topic in plan.topics_json:
+                for video_id in topic["video_ids"]:
+                    multiplier_map[video_id] = topic["multiplier"]
+
+            total_actual = sum(
+                progress.actual_seconds
+                for progress in completed_with_actual
+            )
+
+            total_estimated = sum(
+                duration_map.get(progress.youtube_video_id, 0)
+                * multiplier_map.get(progress.youtube_video_id, 1.5)
+                for progress in completed_with_actual
+            )
+
+            if total_estimated > 0:
+                ratio = total_actual / total_estimated
+
+                new_pace_factor = round(
+                    max(0.5, min(2.0, ratio)),
+                    2,
+                )
+
+    # 3. Build remaining topics, removing completed videos.
+    duration_map = {
+        video.youtube_video_id: video.duration_seconds
+        for video in plan.playlist.videos
+    }
+
     remaining_topics: List[Dict[str, Any]] = []
 
     for topic in plan.topics_json:
-        t_incomplete = [v for v in topic["video_ids"] if v not in completed_vids]
-        if not t_incomplete:
+        incomplete_topic_videos = [
+            video_id
+            for video_id in topic["video_ids"]
+            if video_id not in completed_videos
+        ]
+
+        if not incomplete_topic_videos:
             continue
-        mult = topic["multiplier"]
-        raw_seconds = sum(dur_map.get(v, 0) for v in t_incomplete)
-        remaining_effort = round(((raw_seconds / 3600.0) * mult) * new_pace_factor, 2)
-        remaining_topics.append({
-            "id": topic["id"],
-            "name": topic["name"],
-            "difficulty": topic["difficulty"],
-            "multiplier": mult,
-            "effort_hours": remaining_effort,
-            "video_ids": t_incomplete,
-            "video_count": len(t_incomplete),
-        })
 
-    # 4. Resolve settings
+        multiplier = topic["multiplier"]
+
+        raw_seconds = sum(
+            duration_map.get(video_id, 0)
+            for video_id in incomplete_topic_videos
+        )
+
+        remaining_effort = round(
+            (
+                (raw_seconds / 3600.0)
+                * multiplier
+            ) * new_pace_factor,
+            2,
+        )
+
+        remaining_topics.append(
+            {
+                "id": topic["id"],
+                "name": topic["name"],
+                "difficulty": topic["difficulty"],
+                "multiplier": multiplier,
+                "effort_hours": remaining_effort,
+                "video_ids": incomplete_topic_videos,
+                "video_count": len(incomplete_topic_videos),
+            }
+        )
+
+    # 4. Resolve updated study settings.
     effective_start = start_date or today_date_str
-    effective_hpw = hours_per_week if hours_per_week is not None else plan.hours_per_week
-    effective_target = target_date if target_date is not _UNSET else plan.target_date
 
-    # 5. Build schedule and assign videos
+    effective_hours_per_week = (
+        hours_per_week
+        if hours_per_week is not None
+        else plan.hours_per_week
+    )
+
+    effective_target = (
+        target_date
+        if target_date is not _UNSET
+        else plan.target_date
+    )
+
+    # 5. Build the new schedule and assign remaining videos.
     videos_by_id = {
-        v.youtube_video_id: {
-            "title": v.title,
-            "duration_seconds": v.duration_seconds,
-            "thumbnail_url": v.thumbnail_url,
+        video.youtube_video_id: {
+            "title": video.title,
+            "duration_seconds": video.duration_seconds,
+            "thumbnail_url": video.thumbnail_url,
         }
-        for v in plan.playlist.videos
+        for video in plan.playlist.videos
     }
 
     schedule = build_schedule(
         topics=remaining_topics,
-        hours_per_week=effective_hpw,
+        hours_per_week=effective_hours_per_week,
         start_date=effective_start,
         target_date=effective_target,
     )
-    schedule_with_videos = assign_videos_to_weeks(remaining_topics, schedule, videos_by_id)
 
-    # 6. Update plan
-    plan.hours_per_week = effective_hpw
+    schedule_with_videos = assign_videos_to_weeks(
+        remaining_topics,
+        schedule,
+        videos_by_id,
+    )
+
+    # 6. Update the Plan object.
+    now = datetime.now(timezone.utc)
+
+    plan.hours_per_week = effective_hours_per_week
     plan.start_date = effective_start
     plan.target_date = effective_target
     plan.schedule_json = schedule_with_videos
@@ -429,8 +694,31 @@ def replan(
     plan.required_hours_per_week = schedule["required_hours_per_week"]
     plan.pace_factor = new_pace_factor
     plan.replan_count += 1
-    plan.updated_at = datetime.now(timezone.utc)
+    plan.updated_at = now
 
-    db.commit()
-    db.refresh(plan)
-    return plan
+    # 7. Persist changes in MongoDB.
+    result = db.plans.update_one(
+        {"_id": plan.id},
+        {
+            "$set": {
+                "hours_per_week": plan.hours_per_week,
+                "start_date": plan.start_date,
+                "target_date": plan.target_date,
+                "schedule_json": plan.schedule_json,
+                "feasible": plan.feasible,
+                "required_hours_per_week": plan.required_hours_per_week,
+                "pace_factor": plan.pace_factor,
+                "replan_count": plan.replan_count,
+                "updated_at": now,
+            }
+        },
+    )
+
+    if result.matched_count == 0:
+        raise AppError(
+            "PLAN_NOT_FOUND",
+            f"Plan with ID '{plan.id}' not found.",
+            status_code=404,
+        )
+
+    return _load_plan(db, plan.id)

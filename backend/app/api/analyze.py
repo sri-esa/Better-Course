@@ -1,13 +1,14 @@
+
 from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 
 from app.config import get_settings
-from app.db import get_db
 from app.errors import AppError
 from app.limiter import limiter
+from app.mongo import get_database
 from app.schemas.plan import AnalyzeRequest, PlanResponse
 from app.services.clustering import get_or_create_clustering
 from app.services.effort import build_topics
@@ -23,10 +24,13 @@ settings = get_settings()
 def analyze_playlist(
     request: Request,
     req: AnalyzeRequest,
-    today: Optional[str] = Query(None, description="Client local date YYYY-MM-DD"),
-    db: Session = Depends(get_db),
+    today: Optional[str] = Query(
+        None,
+        description="Client local date YYYY-MM-DD",
+    ),
+    db: Database = Depends(get_database),
 ):
-    # 1. Date normalization and validation
+    # 1. Normalize and validate dates.
     now_date_str = datetime.now(timezone.utc).date().isoformat()
     start_date = req.start_date or now_date_str
 
@@ -38,25 +42,33 @@ def analyze_playlist(
                 status_code=422,
             )
 
-    # 2. Ingest or retrieve cached playlist
+    # 2. Fetch or retrieve the cached playlist.
     playlist = get_or_fetch_playlist(db, req.playlist_url)
 
-    # 3. Topic clustering (retrieves cache or computes)
-    clustering = get_or_create_clustering(db, playlist, method=req.clustering_method)
+    # 3. Retrieve or compute topic clustering.
+    clustering = get_or_create_clustering(
+        db,
+        playlist,
+        method=req.clustering_method,
+    )
 
-    # 4. Effort estimation & topic snapshot
+    # 4. Estimate effort and build topic snapshot.
     videos_dicts = [
         {
-            "youtube_video_id": v.youtube_video_id,
-            "duration_seconds": v.duration_seconds,
-            "title": v.title,
-            "thumbnail_url": v.thumbnail_url,
+            "youtube_video_id": video.youtube_video_id,
+            "duration_seconds": video.duration_seconds,
+            "title": video.title,
+            "thumbnail_url": video.thumbnail_url,
         }
-        for v in playlist.videos
+        for video in playlist.videos
     ]
-    topics_snapshot = build_topics(clustering.result_json, videos_dicts)
 
-    # 5. Create plan with scheduler & video assignment
+    topics_snapshot = build_topics(
+        clustering.result_json,
+        videos_dicts,
+    )
+
+    # 5. Generate and save the study plan.
     plan = create_plan(
         db=db,
         playlist=playlist,
@@ -67,5 +79,8 @@ def analyze_playlist(
         target_date=req.target_date,
     )
 
-    # 6. Format and return plan response
-    return format_plan_response(plan, today_str=today or now_date_str)
+    # 6. Return the existing frontend response format.
+    return format_plan_response(
+        plan,
+        today_str=today or now_date_str,
+    )
