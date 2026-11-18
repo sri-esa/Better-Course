@@ -1,7 +1,7 @@
 {
   "name": "better-course",
   "version": "1.0.0",
-  "description": "StudyFlow: AI-Powered Study Planner for YouTube Playlists",
+  "description": "Syllabify: AI-Powered Study Planner for YouTube Playlists",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
@@ -12,7 +12,7 @@
     "postinstall": "cd frontend && npm install"
   },
   "keywords": [
-    "studyflow",
+    "syllabify",
     "youtube",
     "study-planner",
     "mern",

@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # Clustering and study planning
     CLUSTERING_METHOD: str = "llm"
     TARGET_TOPIC_HOURS: float = 4.0
-    EFFORT_MULT_BEGINNER: float = 1.25
+    EFFORT_MULT_BEGINNER: float = 1.0
     EFFORT_MULT_INTERMEDIATE: float = 1.5
     EFFORT_MULT_ADVANCED: float = 2.0
 

@@ -1,4 +1,4 @@
-# StudyFlow (BetterCourse): AI-Powered Study Planner for YouTube Playlists
+# Syllabify: AI-Powered Study Planner for YouTube Playlists
 
 > Paste any YouTube study playlist. Get an AI-clustered topic breakdown, realistic effort estimation, weekly deadlines, user accounts with Google OAuth, and adaptive re-planning.
 

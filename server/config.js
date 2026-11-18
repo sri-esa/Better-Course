@@ -16,7 +16,7 @@ const config = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || process.env.LLM_API_KEY || '',
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:5173',
   TARGET_TOPIC_HOURS: parseFloat(process.env.TARGET_TOPIC_HOURS || '4.0'),
-  EFFORT_MULT_BEGINNER: parseFloat(process.env.EFFORT_MULT_BEGINNER || '1.25'),
+  EFFORT_MULT_BEGINNER: parseFloat(process.env.EFFORT_MULT_BEGINNER || '1.0'),
   EFFORT_MULT_INTERMEDIATE: parseFloat(process.env.EFFORT_MULT_INTERMEDIATE || '1.5'),
   EFFORT_MULT_ADVANCED: parseFloat(process.env.EFFORT_MULT_ADVANCED || '2.0'),
   MAX_PLAYLIST_VIDEOS: parseInt(process.env.MAX_PLAYLIST_VIDEOS || '500', 10),

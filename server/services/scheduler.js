@@ -3,7 +3,7 @@
  */
 function calculateStudyEffort(totalDurationSeconds, intensity = 'Balanced') {
   const multipliers = {
-    Relaxed: 1.25,
+    Relaxed: 1.0,
     Balanced: 1.5,
     Intensive: 2.0
   };

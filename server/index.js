@@ -90,7 +90,7 @@ let server;
 function startServer(port = PORT) {
   server = app.listen(port, () => {
     console.log(`\n==================================================`);
-    console.log(`🚀 StudyFlow Unified MERN Server running on port ${port}`);
+    console.log(`🚀 Syllabify Unified MERN Server running on port ${port}`);
     console.log(`📡 Health check: http://localhost:${port}/api/health`);
     console.log(`🔑 Google Auth Client ID: ${config.GOOGLE_CLIENT_ID}`);
     console.log(`==================================================\n`);

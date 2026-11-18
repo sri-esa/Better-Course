@@ -193,7 +193,7 @@ export default function LandingPage() {
             <div>
               <h3 className="text-2xl font-bold text-white mb-3">Understand</h3>
               <p className="text-sm text-neutral-400 leading-relaxed">
-                StudyFlow extracts titles, descriptions, and exact video durations via API.
+                Syllabify extracts titles, descriptions, and exact video durations via API.
               </p>
             </div>
           </div>
@@ -340,7 +340,7 @@ export default function LandingPage() {
             <RotateCcw className="w-6 h-6 text-[#70e000] mb-4" />
             <h3 className="text-xl font-bold text-white mb-2">Automatic Replanning</h3>
             <p className="text-sm text-neutral-400 leading-relaxed">
-              Fall behind? StudyFlow deterministically redistributes the remaining workload.
+              Fall behind? Syllabify deterministically redistributes the remaining workload.
             </p>
           </div>
 

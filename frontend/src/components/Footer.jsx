@@ -11,7 +11,7 @@ export default function Footer() {
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-white font-editorial text-xl font-bold">
             <BookOpen className="w-5 h-5 text-[#70e000]" />
-            StudyFlow
+            Syllabify
           </div>
           <p className="text-sm text-neutral-500">
             Turn playlists into progress.

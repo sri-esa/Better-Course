@@ -96,7 +96,7 @@ export default function CreatePlanPage() {
           STUDY PLAN.
         </h1>
         <p className="mt-4 text-base md:text-lg text-neutral-400">
-          Configure your weekly study capacity and let StudyFlow generate an actionable semester plan.
+          Configure your weekly study capacity and let Syllabify generate an actionable semester plan.
         </p>
       </div>
 
@@ -229,7 +229,7 @@ export default function CreatePlanPage() {
               </label>
               <div className="grid grid-cols-3 gap-3">
                 {[
-                  { id: 'Relaxed', desc: '1.25x effort (review)' },
+                  { id: 'Relaxed', desc: '1x effort (review)' },
                   { id: 'Balanced', desc: '1.5x effort (notes)' },
                   { id: 'Intensive', desc: '2.0x effort (code/practice)' },
                 ].map((item) => (

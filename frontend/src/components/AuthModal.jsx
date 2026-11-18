@@ -72,7 +72,7 @@ export default function AuthModal() {
             BetterCourse Account
           </span>
           <h2 className="font-editorial text-3xl font-extrabold uppercase tracking-tight text-white">
-            {authMode === 'login' ? 'WELCOME BACK.' : 'JOIN STUDYFLOW.'}
+            {authMode === 'login' ? 'WELCOME BACK.' : 'JOIN SYLLABIFY.'}
           </h2>
           <p className="text-sm text-neutral-400 mt-2">
             {authMode === 'login'
