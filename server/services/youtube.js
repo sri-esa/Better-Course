@@ -1,215 +1,251 @@
 const axios = require('axios');
-const config = require('../config');
 
-const BARE_PLAYLIST_ID_REGEX = /^[A-Za-z0-9_-]{10,64}$/;
-const ALLOWED_HOSTS = new Set([
-  'youtube.com',
-  'www.youtube.com',
-  'm.youtube.com',
-  'music.youtube.com',
-  'youtu.be',
-]);
-
-function parsePlaylistId(urlOrId) {
-  if (!urlOrId || typeof urlOrId !== 'string') {
-    throw new Error('Playlist URL or ID must be a non-empty string.');
+/**
+ * Extracts playlist ID from various YouTube URL patterns
+ */
+function extractPlaylistId(url) {
+  if (!url) throw new Error('Playlist URL is required.');
+  const trimmed = url.trim();
+  
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+    return trimmed;
   }
 
-  const cleaned = urlOrId.trim();
-
-  // Bare ID
-  if (BARE_PLAYLIST_ID_REGEX.test(cleaned)) {
-    if (cleaned.startsWith('RD')) {
-      throw new Error("Auto-generated YouTube mix playlists (starting with 'RD') are not supported.");
-    }
-    return cleaned;
-  }
-
-  // Parse URL
-  let parsedUrl;
   try {
-    parsedUrl = new URL(cleaned);
-  } catch {
-    throw new Error('Invalid URL format.');
+    const parsed = new URL(trimmed);
+    const listParam = parsed.searchParams.get('list');
+    if (listParam) return listParam;
+  } catch (err) {
+    // continue
   }
 
-  const hostname = (parsedUrl.hostname || '').toLowerCase();
-  if (!ALLOWED_HOSTS.has(hostname)) {
-    throw new Error(`Invalid host '${hostname}'. Only YouTube links are supported.`);
-  }
-
-  const listParam = parsedUrl.searchParams.get('list');
-  if (!listParam) {
-    throw new Error("URL does not contain a 'list=' playlist parameter.");
-  }
-
-  const playlistId = listParam.trim();
-  if (!BARE_PLAYLIST_ID_REGEX.test(playlistId)) {
-    throw new Error(`Invalid playlist ID format: '${playlistId}'.`);
-  }
-
-  if (playlistId.startsWith('RD')) {
-    throw new Error("Auto-generated YouTube mix playlists (starting with 'RD') are not supported.");
-  }
-
-  return playlistId;
+  throw new Error("Could not find 'list=' parameter in the YouTube URL.");
 }
 
-function parseISO8601Duration(durationStr) {
-  if (!durationStr || typeof durationStr !== 'string') return 0;
-
-  const matches = durationStr.match(
-    /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/
-  );
-  if (!matches) return 0;
-
-  const days = parseInt(matches[1] || '0', 10);
-  const hours = parseInt(matches[2] || '0', 10);
-  const minutes = parseInt(matches[3] || '0', 10);
-  const seconds = parseInt(matches[4] || '0', 10);
-
-  return days * 86400 + hours * 3600 + minutes * 60 + seconds;
+/**
+ * Parses ISO 8601 duration into total seconds (e.g., PT1H4M20S -> 3860)
+ */
+function parseDuration(isoDuration) {
+  if (!isoDuration) return 0;
+  const match = isoDuration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return 0;
+  const hours = parseInt(match[1] || 0, 10);
+  const minutes = parseInt(match[2] || 0, 10);
+  const seconds = parseInt(match[3] || 0, 10);
+  return hours * 3600 + minutes * 60 + seconds;
 }
 
-function generateSampleVideos(playlistId) {
-  const topics = [
-    { title: 'Course Overview & Setting Up Your Environment', duration: 1200 },
-    { title: 'Core Foundations & Mental Model', duration: 1800 },
-    { title: 'Deep Dive into Architecture & Design Patterns', duration: 2400 },
-    { title: 'Data Structures & State Modeling', duration: 2100 },
-    { title: 'Working with APIs and Asynchronous Flows', duration: 2700 },
-    { title: 'Advanced Optimization & Edge Cases', duration: 3200 },
-    { title: 'Building a Complete Real-World Project (Part 1)', duration: 3600 },
-    { title: 'Building a Complete Real-World Project (Part 2)', duration: 4200 },
-    { title: 'Testing, Debugging & Performance Profiling', duration: 2400 },
-    { title: 'Deployment, Production Readiness & Next Steps', duration: 1800 },
+/**
+ * Formats seconds into human-readable strings like '18h 24m' or '4m 20s'
+ */
+function formatDuration(seconds) {
+  if (!seconds || seconds <= 0) return '0m';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
+/**
+ * High-quality fallback courses for seamless presentation
+ * even without internet connection or YouTube API credentials.
+ */
+function getSamplePlaylistData(playlistId, playlistUrl) {
+  const isDsa = /dsa|data|algo/i.test(playlistUrl);
+
+  if (isDsa) {
+    const videos = [
+      ["Time and Space Complexity Analysis", 1540],
+      ["Asymptotic Notations (Big O, Omega, Theta)", 1220],
+      ["Arrays and Memory Layout", 1450],
+      ["Array Operations & Two Pointer Technique", 1820],
+      ["Single Linked List Implementation", 2100],
+      ["Doubly and Circular Linked Lists", 1950],
+      ["Reversing a Linked List & Fast-Slow Pointers", 1680],
+      ["Stack ADT and Array Implementation", 1320],
+      ["Balanced Parentheses & Infix to Postfix", 1750],
+      ["Queue ADT and Circular Queue", 1410],
+      ["Binary Trees Representation and Traversal", 2300],
+      ["Binary Search Tree Operations (Insert, Search, Delete)", 2450],
+      ["Heap and Priority Queue Fundamentals", 1900],
+      ["Graph Representation (Adjacency Matrix & List)", 1800],
+      ["Breadth First Search (BFS) & Depth First Search (DFS)", 2600],
+      ["Dijkstra's Shortest Path Algorithm", 2200],
+      ["Dynamic Programming: 0/1 Knapsack", 2700],
+      ["Dynamic Programming: Longest Common Subsequence", 2550]
+    ];
+    let totalSec = 0;
+    const formattedVideos = videos.map(([title, dur], idx) => {
+      totalSec += dur;
+      return {
+        id: idx + 1,
+        youtube_video_id: `sample_vid_${idx + 1}`,
+        title,
+        description: `Comprehensive lecture on ${title}.`,
+        duration_seconds: dur,
+        position: idx + 1,
+        completed: false
+      };
+    });
+
+    return {
+      youtube_playlist_id: playlistId,
+      title: "Data Structures & Algorithms in C++ / Java",
+      thumbnail_url: "https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=800&auto=format&fit=crop&q=80",
+      video_count: formattedVideos.length,
+      total_duration_seconds: totalSec,
+      videos: formattedVideos
+    };
+  }
+
+  // Operating Systems
+  const osVideos = [
+    ["Introduction to Operating Systems & Kernel Architecture", 1380],
+    ["System Calls, User Mode vs Kernel Mode", 1520],
+    ["Process Concept & Process Control Block (PCB)", 1640],
+    ["Process States and Context Switching", 1400],
+    ["Inter-Process Communication (Pipes & Shared Memory)", 1820],
+    ["Threads and Concurrency Models", 1700],
+    ["CPU Scheduling: FCFS, SJF, Round Robin", 2150],
+    ["Multi-Level Queue and Priority Scheduling", 1950],
+    ["Critical Section Problem & Peterson's Algorithm", 1850],
+    ["Semaphores and Mutex Locks", 2200],
+    ["Classic Synchronization Problems (Dining Philosophers)", 2050],
+    ["Deadlock Characterization & Prevention", 1900],
+    ["Banker's Algorithm for Deadlock Avoidance", 2400],
+    ["Memory Management: Paging & Segmentation", 2500],
+    ["Virtual Memory & Page Replacement (FIFO, LRU)", 2350],
+    ["File Systems, Inodes and Directory Structures", 1750],
+    ["Disk Scheduling Algorithms (SCAN, C-SCAN, LOOK)", 1620],
+    ["I/O Systems and Device Drivers Overview", 1480]
   ];
 
-  return topics.map((t, idx) => ({
-    youtube_video_id: `sample_vid_${playlistId.substring(0, 6)}_${idx + 1}`,
-    position: idx,
-    title: `${idx + 1}. ${t.title}`,
-    description: `Lesson ${idx + 1} of comprehensive course series.`,
-    duration_seconds: t.duration,
-    thumbnail_url: `https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=600&auto=format&fit=crop&q=80`,
-  }));
-}
-
-async function fetchPlaylistMetadata(playlistId) {
-  // If YouTube API Key is provided, query YouTube Data API v3
-  if (config.YOUTUBE_API_KEY) {
-    try {
-      // 1. Fetch Playlist Info
-      const plRes = await axios.get('https://www.googleapis.com/youtube/v3/playlists', {
-        params: {
-          part: 'snippet,contentDetails',
-          id: playlistId,
-          key: config.YOUTUBE_API_KEY,
-        },
-      });
-
-      const items = plRes.data?.items;
-      if (!items || items.length === 0) {
-        throw new Error('Playlist not found on YouTube or is private.');
-      }
-
-      const snippet = items[0].snippet;
-      const title = snippet.title || 'Untitled Course';
-      const channelTitle = snippet.channelTitle || 'Educational Channel';
-
-      // 2. Fetch Playlist Items (Videos)
-      let videoItems = [];
-      let nextPageToken = '';
-      do {
-        const itemsRes = await axios.get(
-          'https://www.googleapis.com/youtube/v3/playlistItems',
-          {
-            params: {
-              part: 'snippet,contentDetails',
-              playlistId: playlistId,
-              maxResults: 50,
-              pageToken: nextPageToken || undefined,
-              key: config.YOUTUBE_API_KEY,
-            },
-          }
-        );
-
-        videoItems.push(...(itemsRes.data.items || []));
-        nextPageToken = itemsRes.data.nextPageToken;
-      } while (nextPageToken && videoItems.length < config.MAX_PLAYLIST_VIDEOS);
-
-      // 3. Batch Fetch Durations
-      const videoIds = videoItems
-        .map((item) => item.contentDetails?.videoId)
-        .filter(Boolean);
-
-      const durationMap = {};
-      for (let i = 0; i < videoIds.length; i += 50) {
-        const batch = videoIds.slice(i, i + 50);
-        const vidRes = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
-          params: {
-            part: 'contentDetails',
-            id: batch.join(','),
-            key: config.YOUTUBE_API_KEY,
-          },
-        });
-
-        for (const v of vidRes.data.items || []) {
-          durationMap[v.id] = parseISO8601Duration(v.contentDetails?.duration);
-        }
-      }
-
-      // Build video models
-      const videos = [];
-      videoItems.forEach((item, pos) => {
-        const vid = item.contentDetails?.videoId;
-        const s = item.snippet;
-        const dur = durationMap[vid] || 0;
-        if (dur > 0 && s.title !== 'Private video' && s.title !== 'Deleted video') {
-          videos.push({
-            youtube_video_id: vid,
-            position: pos,
-            title: s.title,
-            description: s.description || '',
-            duration_seconds: dur,
-            thumbnail_url: s.thumbnails?.high?.url || s.thumbnails?.default?.url || '',
-          });
-        }
-      });
-
-      const totalSeconds = videos.reduce((acc, v) => acc + v.duration_seconds, 0);
-
-      return {
-        youtube_playlist_id: playlistId,
-        title,
-        channel_title: channelTitle,
-        video_count: videos.length,
-        total_seconds: totalSeconds,
-        warnings: [],
-        videos,
-      };
-    } catch (err) {
-      console.warn('[YouTube API] Live fetch error:', err.message, '- Using fallback generator');
-    }
-  }
-
-  // Fallback: Generate structured realistic educational playlist
-  const sampleVideos = generateSampleVideos(playlistId);
-  const totalSeconds = sampleVideos.reduce((acc, v) => acc + v.duration_seconds, 0);
+  let totalSec = 0;
+  const formattedVideos = osVideos.map(([title, dur], idx) => {
+    totalSec += dur;
+    return {
+      id: idx + 1,
+      youtube_video_id: `sample_vid_${idx + 1}`,
+      title,
+      description: `Comprehensive lecture on ${title}.`,
+      duration_seconds: dur,
+      position: idx + 1,
+      completed: false
+    };
+  });
 
   return {
     youtube_playlist_id: playlistId,
-    title: 'Complete Mastery Course & Practical Projects',
-    channel_title: 'Engineering Academy',
-    video_count: sampleVideos.length,
-    total_seconds: totalSeconds,
-    warnings: [],
-    videos: sampleVideos,
+    title: "Operating Systems — Complete CSE Course",
+    thumbnail_url: "https://images.unsplash.com/photo-1518770660439-4636190af475?w=800&auto=format&fit=crop&q=80",
+    video_count: formattedVideos.length,
+    total_duration_seconds: totalSec,
+    videos: formattedVideos
   };
 }
 
+/**
+ * Main fetch function that handles YouTube API with pagination and fallback
+ */
+async function getPlaylistData(playlistUrl) {
+  const playlistId = extractPlaylistId(playlistUrl);
+  const apiKey = (process.env.YOUTUBE_API_KEY || '').trim();
+
+  if (!apiKey) {
+    return getSamplePlaylistData(playlistId, playlistUrl);
+  }
+
+  try {
+    // 1. Fetch metadata
+    const metaRes = await axios.get('https://www.googleapis.com/youtube/v3/playlists', {
+      params: { part: 'snippet', id: playlistId, key: apiKey }
+    });
+    const items = metaRes.data.items || [];
+    const title = items[0]?.snippet?.title || "Study Playlist";
+    const thumbs = items[0]?.snippet?.thumbnails || {};
+    const thumbUrl = thumbs.high?.url || thumbs.medium?.url || thumbs.default?.url;
+
+    // 2. Fetch playlist items with pagination
+    let videoItems = [];
+    let nextPageToken = null;
+    do {
+      const pageRes = await axios.get('https://www.googleapis.com/youtube/v3/playlistItems', {
+        params: {
+          part: 'snippet,contentDetails',
+          playlistId: playlistId,
+          maxResults: 50,
+          pageToken: nextPageToken,
+          key: apiKey
+        }
+      });
+      const pageData = pageRes.data;
+      for (const item of pageData.items || []) {
+        const vId = item.contentDetails?.videoId;
+        const snippet = item.snippet || {};
+        if (snippet.title !== 'Private video' && snippet.title !== 'Deleted video') {
+          videoItems.push({
+            youtube_video_id: vId,
+            title: snippet.title || 'Untitled Video',
+            description: snippet.description || '',
+            position: videoItems.length + 1
+          });
+        }
+      }
+      nextPageToken = pageData.nextPageToken;
+    } while (nextPageToken);
+
+    // 3. Batch fetch durations
+    const vIds = videoItems.map(v => v.youtube_video_id);
+    const durationMap = {};
+    for (let i = 0; i < vIds.length; i += 50) {
+      const chunk = vIds.slice(i, i + 50);
+      const vidRes = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
+        params: {
+          part: 'contentDetails',
+          id: chunk.join(','),
+          key: apiKey
+        }
+      });
+      for (const item of vidRes.data.items || []) {
+        durationMap[item.id] = parseDuration(item.contentDetails?.duration);
+      }
+    }
+
+    let totalDuration = 0;
+    const finalVideos = videoItems.map((v, index) => {
+      const dur = durationMap[v.youtube_video_id] || 600;
+      totalDuration += dur;
+      return {
+        id: index + 1,
+        youtube_video_id: v.youtube_video_id,
+        title: v.title,
+        description: v.description,
+        duration_seconds: dur,
+        position: v.position,
+        completed: false
+      };
+    });
+
+    return {
+      youtube_playlist_id: playlistId,
+      title: title,
+      thumbnail_url: thumbUrl || "https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&auto=format&fit=crop&q=60",
+      video_count: finalVideos.length,
+      total_duration_seconds: totalDuration,
+      videos: finalVideos
+    };
+  } catch (err) {
+    console.warn(`YouTube API error (${err.message}). Using offline sample dataset.`);
+    return getSamplePlaylistData(playlistId, playlistUrl);
+  }
+}
+
 module.exports = {
-  parsePlaylistId,
-  parseISO8601Duration,
-  fetchPlaylistMetadata,
+  extractPlaylistId,
+  parseDuration,
+  formatDuration,
+  getPlaylistData
 };

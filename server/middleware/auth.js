@@ -1,13 +1,28 @@
 const jwt = require('jsonwebtoken');
-const { ObjectId } = require('mongodb');
-const config = require('../config');
-const { getDb } = require('../db');
+const mongoose = require('mongoose');
+const User = require('../models/User');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'bettercourse_super_secret_jwt_key_2026';
+
+async function findUserById(userId) {
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const user = await User.findById(userId);
+      if (user) return user;
+    } catch {}
+  }
+  try {
+    const authRoutes = require('../routes/auth');
+    if (typeof authRoutes.getMemoryUser === 'function') {
+      return authRoutes.getMemoryUser(userId);
+    }
+  } catch {}
+  return null;
+}
 
 async function requireAuth(req, res, next) {
   try {
     let token = null;
-
-    // Check Authorization header: Bearer <token>
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       token = authHeader.split(' ')[1];
@@ -17,35 +32,22 @@ async function requireAuth(req, res, next) {
 
     if (!token) {
       return res.status(401).json({
-        error: {
-          code: 'UNAUTHORIZED',
-          message: 'Authentication required. Please sign in.',
-        },
+        error: { code: 'UNAUTHORIZED', message: 'Authentication required. Please sign in.' },
       });
     }
 
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-    const db = getDb();
-    
-    // Look up user
-    let user = null;
-    try {
-      user = await db.collection('users').findOne({ _id: new ObjectId(decoded.userId) });
-    } catch {
-      user = await db.collection('users').findOne({ id: decoded.userId });
-    }
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await findUserById(decoded.userId);
 
     if (!user) {
       return res.status(401).json({
-        error: {
-          code: 'USER_NOT_FOUND',
-          message: 'User no longer exists. Please sign in again.',
-        },
+        error: { code: 'USER_NOT_FOUND', message: 'User not found. Please sign in again.' },
       });
     }
 
     req.user = {
-      id: user._id.toString(),
+      id: user._id ? user._id.toString() : user.id,
+      _id: user._id || user.id,
       email: user.email,
       name: user.name,
       avatar: user.avatar,
@@ -54,10 +56,7 @@ async function requireAuth(req, res, next) {
     next();
   } catch (error) {
     return res.status(401).json({
-      error: {
-        code: 'INVALID_TOKEN',
-        message: 'Invalid or expired token. Please sign in again.',
-      },
+      error: { code: 'INVALID_TOKEN', message: 'Invalid or expired token.' },
     });
   }
 }
@@ -77,19 +76,13 @@ async function optionalAuth(req, res, next) {
       return next();
     }
 
-    const decoded = jwt.verify(token, config.JWT_SECRET);
-    const db = getDb();
-
-    let user = null;
-    try {
-      user = await db.collection('users').findOne({ _id: new ObjectId(decoded.userId) });
-    } catch {
-      user = await db.collection('users').findOne({ id: decoded.userId });
-    }
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await findUserById(decoded.userId);
 
     if (user) {
       req.user = {
-        id: user._id.toString(),
+        id: user._id ? user._id.toString() : user.id,
+        _id: user._id || user.id,
         email: user.email,
         name: user.name,
         avatar: user.avatar,

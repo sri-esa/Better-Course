@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
+import { X, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function AuthModal() {
@@ -54,44 +55,43 @@ export default function AuthModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 sm:p-8 relative animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
+      <div className="bg-[#0f1117] border border-white/10 rounded-3xl shadow-2xl max-w-md w-full p-6 sm:p-8 relative text-white animate-in fade-in zoom-in-95 duration-150">
         {/* Close Button */}
         <button
           onClick={() => setAuthModalOpen(false)}
-          className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
+          className="absolute top-5 right-5 text-neutral-400 hover:text-white p-2 rounded-xl hover:bg-white/5 transition-colors"
+          aria-label="Close modal"
         >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <X className="w-5 h-5" />
         </button>
 
         {/* Title */}
         <div className="text-center mb-6">
-          <span className="inline-block px-3 py-1 bg-indigo-50 text-indigo-700 text-xs font-semibold rounded-full mb-2">
+          <span className="inline-block px-3 py-1 bg-[#70e000]/10 text-[#70e000] text-xs font-mono uppercase tracking-widest rounded-full mb-3 border border-[#70e000]/20">
             BetterCourse Account
           </span>
-          <h2 className="text-2xl font-bold text-slate-900">
-            {authMode === 'login' ? 'Welcome back' : 'Create your account'}
+          <h2 className="font-editorial text-3xl font-extrabold uppercase tracking-tight text-white">
+            {authMode === 'login' ? 'WELCOME BACK.' : 'JOIN STUDYFLOW.'}
           </h2>
-          <p className="text-sm text-slate-500 mt-1">
+          <p className="text-sm text-neutral-400 mt-2">
             {authMode === 'login'
-              ? 'Sign in to access your saved courses & study progress'
-              : 'Save your study plans and track weekly milestones'}
+              ? 'Access your saved playlists, custom schedules & study stats'
+              : 'Save your study plans and track progress across any device'}
           </p>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-200 mb-6">
+        <div className="flex border-b border-white/10 mb-6">
           <button
             onClick={() => {
               setAuthMode('login');
               setError('');
             }}
-            className={`flex-1 pb-3 text-sm font-medium border-b-2 transition-colors ${
+            className={`flex-1 pb-3 text-xs font-mono uppercase tracking-wider transition-colors border-b-2 ${
               authMode === 'login'
-                ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
+                ? 'border-[#70e000] text-[#70e000]'
+                : 'border-transparent text-neutral-400 hover:text-white'
             }`}
           >
             Sign In
@@ -101,10 +101,10 @@ export default function AuthModal() {
               setAuthMode('register');
               setError('');
             }}
-            className={`flex-1 pb-3 text-sm font-medium border-b-2 transition-colors ${
+            className={`flex-1 pb-3 text-xs font-mono uppercase tracking-wider transition-colors border-b-2 ${
               authMode === 'register'
-                ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
+                ? 'border-[#70e000] text-[#70e000]'
+                : 'border-transparent text-neutral-400 hover:text-white'
             }`}
           >
             Create Account
@@ -113,10 +113,8 @@ export default function AuthModal() {
 
         {/* Error Alert */}
         {error && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center gap-2">
-            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+          <div className="mb-4 p-3.5 bg-red-950/40 border border-red-500/30 text-red-200 text-xs rounded-xl flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
             <span>{error}</span>
           </div>
         )}
@@ -126,7 +124,7 @@ export default function AuthModal() {
           <GoogleLogin
             onSuccess={handleGoogleSuccess}
             onError={handleGoogleError}
-            theme="outline"
+            theme="filled_black"
             size="large"
             shape="pill"
             width="100%"
@@ -135,41 +133,49 @@ export default function AuthModal() {
         </div>
 
         <div className="relative flex py-2 items-center mb-4">
-          <div className="flex-grow border-t border-slate-200"></div>
-          <span className="flex-shrink mx-3 text-slate-400 text-xs uppercase tracking-wider">or email</span>
-          <div className="flex-grow border-t border-slate-200"></div>
+          <div className="flex-grow border-t border-white/10"></div>
+          <span className="flex-shrink mx-3 text-neutral-500 text-[11px] font-mono uppercase tracking-wider">
+            or continue with email
+          </span>
+          <div className="flex-grow border-t border-white/10"></div>
         </div>
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           {authMode === 'register' && (
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
+              <label className="block text-xs font-mono uppercase tracking-wider text-neutral-300 mb-1.5">
+                Full Name
+              </label>
               <input
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Jane Doe"
-                className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-4 py-3 rounded-xl bg-[#161922] border border-white/10 text-white placeholder-neutral-500 focus:outline-none focus:border-[#70e000] text-sm font-mono"
               />
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Email Address</label>
+            <label className="block text-xs font-mono uppercase tracking-wider text-neutral-300 mb-1.5">
+              Email Address
+            </label>
             <input
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-4 py-3 rounded-xl bg-[#161922] border border-white/10 text-white placeholder-neutral-500 focus:outline-none focus:border-[#70e000] text-sm font-mono"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Password</label>
+            <label className="block text-xs font-mono uppercase tracking-wider text-neutral-300 mb-1.5">
+              Password
+            </label>
             <input
               type="password"
               required
@@ -177,14 +183,14 @@ export default function AuthModal() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-4 py-3 rounded-xl bg-[#161922] border border-white/10 text-white placeholder-neutral-500 focus:outline-none focus:border-[#70e000] text-sm font-mono"
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full mt-2 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl text-sm transition-all shadow-md shadow-indigo-100 disabled:opacity-50"
+            className="w-full mt-2 py-3.5 px-4 bg-white hover:bg-[#70e000] text-black font-semibold rounded-full text-xs uppercase tracking-wider transition-all disabled:opacity-50"
           >
             {loading ? 'Please wait...' : authMode === 'login' ? 'Sign In' : 'Create Account'}
           </button>

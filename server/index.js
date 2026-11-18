@@ -3,14 +3,12 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
+const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
-const { connectDB, getDb } = require('./db');
 
 const authRoutes = require('./routes/auth');
-const analyzeRoutes = require('./routes/analyze');
-const plansRoutes = require('./routes/plans');
-const playlistsRoutes = require('./routes/playlists');
+const apiRoutes = require('./routes/api');
 
 const app = express();
 
@@ -18,7 +16,6 @@ const app = express();
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow localhost and any client requests in unified/production
       callback(null, true);
     },
     credentials: true,
@@ -30,41 +27,39 @@ app.use(cookieParser());
 // Rate Limiting
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 60,
+  max: 120,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
-    error: {
-      code: 'RATE_LIMITED',
-      message: 'Too many requests. Please slow down.',
-    },
+    detail: 'Too many requests. Please slow down.',
   },
 });
 app.use('/api/', apiLimiter);
 
-// Health Check
-app.get('/api/health', (req, res) => {
-  try {
-    const db = getDb();
-    return res.json({
-      status: 'ok',
-      database: db ? 'connected' : 'disconnected',
-      environment: config.NODE_ENV,
-    });
-  } catch {
-    return res.json({
-      status: 'ok',
-      database: 'connecting',
-      environment: config.NODE_ENV,
-    });
-  }
+// Connect to MongoDB Atlas (with in-memory fallback)
+const MONGO_URI = config.MONGODB_URI;
+mongoose.set('bufferCommands', false);
+mongoose
+  .connect(MONGO_URI, { serverSelectionTimeoutMS: 3000 })
+  .then(() => console.log('[Database] Connected to MongoDB Atlas!'))
+  .catch((err) => {
+    console.warn(
+      `[Database] MongoDB Atlas connection notice (${err.message}). Fallback layer active for seamless local presentation.`
+    );
+  });
+
+// Health Check Endpoints
+app.get(['/health', '/api/health'], (req, res) => {
+  res.json({
+    status: 'ok',
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'fallback-active',
+    environment: config.NODE_ENV,
+  });
 });
 
-// API Routes
+// Mount Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/analyze', analyzeRoutes);
-app.use('/api/plans', plansRoutes);
-app.use('/api/playlists', playlistsRoutes);
+app.use('/api', apiRoutes);
 
 // Unified Frontend Serving (Single-Domain Production)
 const distPath = path.join(__dirname, '../frontend/dist');
@@ -84,30 +79,23 @@ if (fs.existsSync(distPath)) {
 app.use((err, req, res, next) => {
   console.error('[Unhandled Error]:', err);
   return res.status(500).json({
-    error: {
-      code: 'INTERNAL_ERROR',
-      message: err.message || 'An unexpected server error occurred.',
-    },
+    detail: err.message || 'An unexpected server error occurred.',
   });
 });
 
 // Start Server
-async function startServer() {
-  try {
-    await connectDB();
-    const server = app.listen(config.PORT, () => {
-      console.log(`\n==================================================`);
-      console.log(`🚀 StudyFlow Unified MERN Server running on port ${config.PORT}`);
-      console.log(`📡 Health check: http://localhost:${config.PORT}/api/health`);
-      console.log(`🔑 Google Auth Client ID active`);
-      console.log(`==================================================\n`);
-    });
+const PORT = config.PORT || 5000;
+let server;
 
-    return server;
-  } catch (err) {
-    console.error('[Server Startup Failure]:', err.message);
-    process.exit(1);
-  }
+function startServer(port = PORT) {
+  server = app.listen(port, () => {
+    console.log(`\n==================================================`);
+    console.log(`🚀 StudyFlow Unified MERN Server running on port ${port}`);
+    console.log(`📡 Health check: http://localhost:${port}/api/health`);
+    console.log(`🔑 Google Auth Client ID: ${config.GOOGLE_CLIENT_ID}`);
+    console.log(`==================================================\n`);
+  });
+  return server;
 }
 
 if (require.main === module) {

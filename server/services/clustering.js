@@ -1,99 +1,118 @@
 const axios = require('axios');
-const config = require('../config');
 
-function durationChunking(videos, targetHours = 4.0) {
-  const targetSeconds = targetHours * 3600;
-  const n = videos.length;
+/**
+ * Deterministic fallback clustering when LLM is unavailable or offline
+ */
+function groupVideosFallback(videos) {
+  const total = videos.length;
+  if (total === 0) return [];
+
+  const chunkSize = total > 12 ? 4 : (total >= 6 ? 3 : total);
   const topics = [];
 
-  let startIdx = 0;
-  let currSeconds = 0;
+  const defaultTemplates = [
+    { name: "Foundations & Fundamentals", difficulty: "FOUNDATION" },
+    { name: "Core Concepts & Mechanics", difficulty: "FOUNDATION" },
+    { name: "Applied Principles & Methods", difficulty: "INTERMEDIATE" },
+    { name: "Algorithms & Structural Workflows", difficulty: "INTERMEDIATE" },
+    { name: "Advanced Techniques & Optimization", difficulty: "ADVANCED" },
+    { name: "System Architecture & Deep Dive", difficulty: "ADVANCED" },
+  ];
 
-  for (let i = 0; i < n; i++) {
-    currSeconds += videos[i].duration_seconds || 0;
-    if ((currSeconds >= targetSeconds && i > startIdx) || i === n - 1) {
-      let title = videos[startIdx]?.title || `Topic ${topics.length + 1}`;
-      title = title.replace(/^\d+[\.\-\s]+/, '').trim();
-      if (title.length > 50) title = title.substring(0, 47) + '...';
+  let topicOrder = 1;
+  for (let i = 0; i < total; i += chunkSize) {
+    const chunk = videos.slice(i, i + chunkSize);
+    const positions = chunk.map(v => v.position);
 
-      topics.push({
-        name: title,
-        difficulty: topics.length === 0 ? 'beginner' : i === n - 1 ? 'advanced' : 'intermediate',
-        summary: `Covers lessons ${startIdx + 1} to ${i + 1}.`,
-        start_index: startIdx,
-        end_index: i,
-      });
+    const firstTitle = chunk[0].title;
+    const cleanTitle = firstTitle
+      .replace(/^(lecture|video|tutorial|part|ch|chapter|\d+)[\s:\-#\.]*/i, '')
+      .trim();
+    const shortTitle = cleanTitle.length > 30 ? cleanTitle.substring(0, 28) + '...' : cleanTitle;
 
-      startIdx = i + 1;
-      currSeconds = 0;
-    }
+    const template = defaultTemplates[(topicOrder - 1) % defaultTemplates.length];
+    const name = shortTitle ? `${shortTitle} & Related` : template.name;
+
+    topics.push({
+      id: topicOrder,
+      name,
+      difficulty: template.difficulty,
+      order_number: topicOrder,
+      video_positions: positions
+    });
+    topicOrder++;
   }
 
-  return { topics };
+  return topics;
 }
 
-async function clusterWithGemini(videos, targetHours = 4.0) {
-  if (!config.GEMINI_API_KEY) {
-    return durationChunking(videos, targetHours);
+/**
+ * Semantic topic grouping with Gemini LLM or clean fallback
+ */
+async function clusterAndNameTopics(videos) {
+  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+
+  if (!apiKey) {
+    return groupVideosFallback(videos);
   }
 
   try {
-    const videoDescriptions = videos.map((v, i) => ({
-      index: i,
-      title: v.title,
-      duration_minutes: Math.round((v.duration_seconds || 0) / 60),
-    }));
+    const summaryList = videos.map(v => `Position ${v.position}: ${v.title}`).join('\n');
+    const prompt = `
+You are an academic curriculum designer. Given this sequence of ordered YouTube videos from a course playlist:
 
-    const systemPrompt = `You are an expert curriculum designer. Group the ordered list of videos into coherent sequential study topics.
-Rules:
-1. Contiguous index ranges ONLY (no gaps, no overlaps).
-2. Topics should be around ${targetHours} hours of total watch time.
-3. Assess difficulty: 'beginner', 'intermediate', or 'advanced'.
-4. Respond in valid JSON with schema: {"topics": [{"name": "string", "difficulty": "beginner|intermediate|advanced", "summary": "string", "start_index": number, "end_index": number}]}`;
+${summaryList}
 
-    const userPrompt = `Here are the course videos:\n${JSON.stringify(videoDescriptions, null, 2)}`;
+Group these videos into consecutive, cohesive academic topics (around 3 to 6 videos per topic).
+Strictly preserve the original sequential order (do not shuffle video positions).
+Assign each topic:
+1. "name": A concise, professional academic topic title (e.g., "Process Fundamentals", "CPU Scheduling", "Virtual Memory").
+2. "difficulty": Exactly one of "FOUNDATION", "INTERMEDIATE", or "ADVANCED".
+3. "video_positions": The list of integer position numbers included in this topic.
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.GEMINI_API_KEY}`;
+Respond ONLY with valid JSON in this exact structure:
+{
+  "topics": [
+    {
+      "name": "Process Fundamentals",
+      "difficulty": "FOUNDATION",
+      "video_positions": [1, 2, 3, 4]
+    }
+  ]
+}
+`;
+
     const response = await axios.post(
-      endpoint,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.2,
-        },
-      },
-      { timeout: 30000 }
+        contents: [{ parts: [{ text: prompt }] }]
+      }
     );
 
-    const candidate = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (candidate) {
-      const parsed = JSON.parse(candidate);
-      if (Array.isArray(parsed.topics) && parsed.topics.length > 0) {
-        return parsed;
-      }
+    let rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+    if (rawText.startsWith('```')) {
+      rawText = rawText.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
+
+    const data = JSON.parse(rawText);
+    if (Array.isArray(data.topics) && data.topics.length > 0) {
+      return data.topics.map((t, idx) => ({
+        id: idx + 1,
+        name: t.name,
+        difficulty: t.difficulty || 'FOUNDATION',
+        order_number: idx + 1,
+        video_positions: t.video_positions || []
+      }));
+    }
+
+    return groupVideosFallback(videos);
   } catch (err) {
-    console.warn('[Gemini Clustering] Fallback to duration chunking:', err.message);
+    console.warn(`Gemini clustering fallback triggered: ${err.message}`);
+    return groupVideosFallback(videos);
   }
-
-  return durationChunking(videos, targetHours);
-}
-
-async function getOrClusterTopics(videos, method = 'llm') {
-  if (method === 'llm' && config.GEMINI_API_KEY) {
-    return await clusterWithGemini(videos, config.TARGET_TOPIC_HOURS);
-  }
-  return durationChunking(videos, config.TARGET_TOPIC_HOURS);
 }
 
 module.exports = {
-  durationChunking,
-  clusterWithGemini,
-  getOrClusterTopics,
+  clusterAndNameTopics,
+  groupVideosFallback
 };

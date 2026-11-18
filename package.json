@@ -11,7 +11,13 @@
     "build": "cd frontend && npm install && npm run build",
     "postinstall": "cd frontend && npm install"
   },
-  "keywords": ["studyflow", "youtube", "study-planner", "mern", "express"],
+  "keywords": [
+    "studyflow",
+    "youtube",
+    "study-planner",
+    "mern",
+    "express"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
@@ -24,7 +30,8 @@
     "express-rate-limit": "^7.5.0",
     "google-auth-library": "^9.15.0",
     "jsonwebtoken": "^9.0.2",
-    "mongodb": "^6.12.0"
+    "mongodb": "^6.12.0",
+    "mongoose": "^9.12.2"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

@@ -1,154 +1,110 @@
-function addDays(isoDateStr, days) {
-  const d = new Date(isoDateStr + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().split('T')[0];
+/**
+ * Calculates study effort taking into account video duration and study intensity
+ */
+function calculateStudyEffort(totalDurationSeconds, intensity = 'Balanced') {
+  const multipliers = {
+    Relaxed: 1.25,
+    Balanced: 1.5,
+    Intensive: 2.0
+  };
+  const mult = multipliers[intensity] || 1.5;
+  const effortSeconds = Math.round(totalDurationSeconds * mult);
+  const effortMinutes = Math.round(effortSeconds / 60);
+  const effortHours = Math.round((effortSeconds / 3600) * 10) / 10;
+
+  return {
+    effort_seconds: effortSeconds,
+    effort_minutes: effortMinutes,
+    effort_hours: effortHours,
+    multiplier: mult
+  };
 }
 
-function daysBetween(startStr, endStr) {
-  const d1 = new Date(startStr + 'T00:00:00Z');
-  const d2 = new Date(endStr + 'T00:00:00Z');
-  return Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
-}
-
-function schedulePlan({ topics, hoursPerWeek, startDate, targetDate = null }) {
-  if (!hoursPerWeek || hoursPerWeek <= 0) {
-    throw new Error('hoursPerWeek must be greater than 0.');
+/**
+ * Calculates weekly schedule deterministically
+ */
+function calculateSchedule(topics, hoursPerWeek, targetDateStr, intensity = 'Balanced') {
+  const now = new Date();
+  let targetDate = new Date(targetDateStr);
+  if (isNaN(targetDate.getTime())) {
+    targetDate = new Date(now.getTime() + 42 * 24 * 60 * 60 * 1000); // 6 weeks default
   }
 
-  const weeks = [];
-  let currentWeekNum = 1;
-  let currentWeekStart = startDate;
-  let currentWeekEnd = addDays(currentWeekStart, 6);
-  let currentWeekHours = 0;
-  let currentWeekTopics = [];
+  const diffTime = targetDate.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const weeksAvailable = Math.max(1, Math.ceil(diffDays / 7));
 
-  const topicDeadlines = {};
+  const totalDuration = topics.reduce((acc, t) => acc + (t.total_duration_seconds || 0), 0);
+  const effortData = calculateStudyEffort(totalDuration, intensity);
+  const totalEffortHours = effortData.effort_hours;
 
-  for (const topic of topics) {
-    let remainingTopicHours = topic.hours;
-    let partIndex = 1;
-    const isSplittable = topic.hours > hoursPerWeek;
-    const totalParts = isSplittable ? Math.ceil(topic.hours / hoursPerWeek) : 1;
+  const requiredHoursPerWeek = Math.round((totalEffortHours / weeksAvailable) * 10) / 10;
+  const isFeasible = hoursPerWeek >= requiredHoursPerWeek;
+  const status = isFeasible ? 'FEASIBLE' : `NEEDS ${requiredHoursPerWeek}H/WEEK`;
 
-    while (remainingTopicHours > 0) {
-      const spaceInWeek = hoursPerWeek - currentWeekHours;
+  const weeklyPlans = [];
+  const numTopics = topics.length;
 
-      // If week is full (or almost full) and we have not started this topic yet
-      if (spaceInWeek <= 0.1) {
-        weeks.push({
-          week: currentWeekNum,
-          start: currentWeekStart,
-          end: currentWeekEnd,
-          hours: Math.round(currentWeekHours * 10) / 10,
-          topics: currentWeekTopics,
-        });
-
-        currentWeekNum += 1;
-        currentWeekStart = addDays(currentWeekEnd, 1);
-        currentWeekEnd = addDays(currentWeekStart, 6);
-        currentWeekHours = 0;
-        currentWeekTopics = [];
-        continue;
-      }
-
-      if (remainingTopicHours <= spaceInWeek || !isSplittable) {
-        // Fits in this week
-        currentWeekTopics.push({
-          topic_id: topic.id,
-          name: topic.name,
-          hours: Math.round(remainingTopicHours * 10) / 10,
-          part: isSplittable ? partIndex : 1,
-          total_parts: totalParts,
-          videos: topic.videos || [],
-        });
-        currentWeekHours += remainingTopicHours;
-        remainingTopicHours = 0;
-        topicDeadlines[topic.id] = currentWeekEnd;
-      } else {
-        // Topic is bigger than remaining space
-        const allocated = spaceInWeek;
-        currentWeekTopics.push({
-          topic_id: topic.id,
-          name: topic.name,
-          hours: Math.round(allocated * 10) / 10,
-          part: partIndex,
-          total_parts: totalParts,
-          videos: topic.videos || [],
-        });
-        currentWeekHours += allocated;
-        remainingTopicHours -= allocated;
-        partIndex += 1;
-
-        weeks.push({
-          week: currentWeekNum,
-          start: currentWeekStart,
-          end: currentWeekEnd,
-          hours: Math.round(currentWeekHours * 10) / 10,
-          topics: currentWeekTopics,
-        });
-
-        currentWeekNum += 1;
-        currentWeekStart = addDays(currentWeekEnd, 1);
-        currentWeekEnd = addDays(currentWeekStart, 6);
-        currentWeekHours = 0;
-        currentWeekTopics = [];
-      }
-    }
+  if (numTopics === 0) {
+    return {
+      weeks_available: weeksAvailable,
+      required_hours_per_week: requiredHoursPerWeek,
+      status,
+      is_feasible: isFeasible,
+      weekly_plans: []
+    };
   }
 
-  // Push final week
-  if (currentWeekTopics.length > 0) {
-    weeks.push({
-      week: currentWeekNum,
-      start: currentWeekStart,
-      end: currentWeekEnd,
-      hours: Math.round(currentWeekHours * 10) / 10,
-      topics: currentWeekTopics,
+  let currentTopicIdx = 0;
+  for (let weekNum = 1; weekNum <= weeksAvailable; weekNum++) {
+    if (currentTopicIdx >= numTopics) break;
+
+    const assignedTopic = topics[currentTopicIdx];
+    currentTopicIdx++;
+
+    const deadlineDate = new Date(now.getTime() + weekNum * 7 * 24 * 60 * 60 * 1000);
+    const deadlineFormatted = deadlineDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+    weeklyPlans.push({
+      id: weekNum,
+      week_number: weekNum,
+      topic_id: assignedTopic.id,
+      topic_name: assignedTopic.name,
+      difficulty: assignedTopic.difficulty,
+      deadline: deadlineFormatted,
+      estimated_minutes: assignedTopic.estimated_effort_minutes || 0
     });
   }
 
-  const completionDate = weeks[weeks.length - 1]?.end || startDate;
-  const totalEffortHours = topics.reduce((acc, t) => acc + t.hours, 0);
+  // If there are still topics left, cluster them into the last week
+  while (currentTopicIdx < numTopics) {
+    const assignedTopic = topics[currentTopicIdx];
+    const lastWeek = weeklyPlans.length || 1;
+    const deadlineDate = new Date(now.getTime() + lastWeek * 7 * 24 * 60 * 60 * 1000);
+    const deadlineFormatted = deadlineDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-  let feasible = true;
-  let requiredHoursPerWeek = null;
-
-  if (targetDate) {
-    const daysAvailable = daysBetween(startDate, targetDate);
-    if (daysAvailable <= 0) {
-      feasible = false;
-      requiredHoursPerWeek = totalEffortHours;
-    } else {
-      const weeksAvailable = Math.max(1, daysAvailable / 7);
-      feasible = completionDate <= targetDate;
-      if (!feasible) {
-        requiredHoursPerWeek = Math.round((totalEffortHours / weeksAvailable) * 10) / 10;
-      }
-    }
+    weeklyPlans.push({
+      id: weeklyPlans.length + 1,
+      week_number: lastWeek,
+      topic_id: assignedTopic.id,
+      topic_name: assignedTopic.name,
+      difficulty: assignedTopic.difficulty,
+      deadline: deadlineFormatted,
+      estimated_minutes: assignedTopic.estimated_effort_minutes || 0
+    });
+    currentTopicIdx++;
   }
 
   return {
-    weeks,
-    summary: {
-      total_topics: topics.length,
-      total_effort_hours: Math.round(totalEffortHours * 10) / 10,
-      total_weeks: weeks.length,
-      completion_date: completionDate,
-      feasible,
-      required_hours_per_week: requiredHoursPerWeek,
-      pace_factor: 1.0,
-      replan_count: 0,
-      clustering_method_used: 'llm',
-    },
-    topic_deadlines: Object.keys(topicDeadlines).map((tid) => ({
-      topic_id: tid,
-      deadline: topicDeadlines[tid],
-    })),
+    weeks_available: weeksAvailable,
+    required_hours_per_week: requiredHoursPerWeek,
+    status,
+    is_feasible: isFeasible,
+    weekly_plans: weeklyPlans
   };
 }
 
 module.exports = {
-  addDays,
-  daysBetween,
-  schedulePlan,
+  calculateStudyEffort,
+  calculateSchedule
 };

@@ -1,12 +1,10 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { BookOpen, Sparkles, Clock, Calendar, ArrowRight, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { usePlan } from '../context/PlanContext';
-import { fetchPlan } from '../api/studyflowApi';
 
 export default function MyCoursesPage() {
-  const { user, token } = useAuth();
-  const { savePlan } = usePlan();
+  const { user, token, openLogin } = useAuth();
   const navigate = useNavigate();
 
   const [courses, setCourses] = useState([]);
@@ -15,9 +13,14 @@ export default function MyCoursesPage() {
 
   useEffect(() => {
     async function loadCourses() {
-      if (!token) return;
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+
       try {
-        const res = await fetch('/api/plans/my-courses', {
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/auth/my-courses`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
@@ -37,123 +40,145 @@ export default function MyCoursesPage() {
     loadCourses();
   }, [token]);
 
-  async function handleOpenCourse(planId) {
-    try {
-      const fullPlan = await fetchPlan(planId);
-      if (fullPlan) {
-        savePlan(fullPlan);
-        navigate('/plan');
-      }
-    } catch (err) {
-      alert('Could not open this course: ' + err.message);
-    }
-  }
-
-  async function handleDeleteCourse(planId, e) {
-    e.stopPropagation();
-    if (!confirm('Are you sure you want to remove this course from your library?')) return;
-
-    try {
-      const res = await fetch(`/api/plans/${planId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (res.ok) {
-        setCourses((prev) => prev.filter((c) => c.id !== planId));
-      }
-    } catch {
-      alert('Failed to delete course.');
-    }
+  if (!user && !loading) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center text-center px-6 max-w-xl mx-auto">
+        <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-[#70e000] mb-6">
+          <BookOpen className="w-8 h-8" />
+        </div>
+        <h2 className="font-editorial text-4xl font-extrabold uppercase text-white tracking-tight">
+          SIGN IN TO VIEW SAVED COURSES.
+        </h2>
+        <p className="text-neutral-400 text-sm mt-3">
+          Sign in or create an account to view and track all your AI-generated study playlists.
+        </p>
+        <button
+          onClick={openLogin}
+          className="mt-6 px-6 py-3 rounded-full bg-white hover:bg-[#70e000] text-black font-semibold text-xs uppercase tracking-wider transition-all"
+        >
+          Sign In Now
+        </button>
+      </div>
+    );
   }
 
   if (loading) {
     return (
-      <div className="text-center py-20">
-        <div className="inline-block w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-sm text-slate-500 mt-3">Loading your course library...</p>
+      <div className="text-center py-28">
+        <div className="inline-block w-8 h-8 border-2 border-[#70e000] border-t-transparent rounded-full animate-spin"></div>
+        <p className="text-xs font-mono text-neutral-400 mt-4">Loading your enrolled courses...</p>
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-8">
+    <div className="py-12 px-6 max-w-6xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-6 mb-10 pb-8 border-b border-white/10">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">My Course Library</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            All your AI-generated study playlists linked to your account.
+          <span className="text-xs font-mono uppercase tracking-widest text-[#70e000] block mb-2">
+            LIBRARY
+          </span>
+          <h1 className="font-editorial text-4xl sm:text-5xl font-extrabold uppercase tracking-tight text-white">
+            MY STUDY COURSES.
+          </h1>
+          <p className="text-sm text-neutral-400 mt-2">
+            {courses.length} {courses.length === 1 ? 'course' : 'courses'} saved under your account ({user?.email}).
           </p>
         </div>
-        <button
-          onClick={() => navigate('/')}
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl shadow-sm transition-all"
+
+        <Link
+          to="/create"
+          className="inline-flex items-center gap-2 px-5 py-3 rounded-full text-xs font-semibold uppercase tracking-wider bg-white text-black hover:bg-[#70e000] transition-all self-start sm:self-auto"
         >
-          + Plan New Course
-        </button>
+          <Sparkles className="w-3.5 h-3.5" />
+          Plan New Course
+        </Link>
       </div>
 
       {error && (
-        <div className="mb-6 p-4 bg-red-50 text-red-700 text-sm rounded-xl border border-red-200">
+        <div className="mb-6 p-4 rounded-xl bg-red-950/40 border border-red-500/30 text-red-200 text-sm">
           {error}
         </div>
       )}
 
       {courses.length === 0 ? (
-        <div className="text-center py-16 bg-white border border-slate-200 rounded-2xl p-8">
-          <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl font-bold">
-            📚
+        <div className="text-center py-20 px-6 rounded-3xl bg-[#0f1117] border border-white/10 max-w-lg mx-auto">
+          <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-[#70e000] mx-auto mb-4">
+            <BookOpen className="w-6 h-6" />
           </div>
-          <h3 className="text-lg font-bold text-slate-800">No courses saved yet</h3>
-          <p className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">
-            Paste any YouTube study playlist link to generate your first structured curriculum!
+          <h3 className="text-xl font-editorial font-bold text-white uppercase">
+            No courses in library
+          </h3>
+          <p className="text-sm text-neutral-400 mt-2 max-w-sm mx-auto">
+            You haven't generated any study plans with this account yet. Paste any YouTube playlist to start!
           </p>
-          <button
-            onClick={() => navigate('/')}
-            className="mt-5 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 transition-colors"
+          <Link
+            to="/create"
+            className="mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#70e000] hover:bg-[#80f000] text-black font-semibold text-xs uppercase tracking-wider transition-all"
           >
             Create Your First Plan
-          </button>
+          </Link>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {courses.map((course) => (
-            <div
+            <Link
               key={course.id}
-              onClick={() => handleOpenCourse(course.id)}
-              className="bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md rounded-2xl p-5 cursor-pointer transition-all flex flex-col justify-between"
+              to={`/plan/${course.id}`}
+              className="group p-6 rounded-2xl bg-[#0f1117] border border-white/10 hover:border-[#70e000]/50 transition-all flex flex-col justify-between hover:shadow-xl hover:shadow-[#70e000]/5"
             >
               <div>
-                <div className="flex items-start justify-between gap-3">
-                  <h3 className="font-bold text-base text-slate-900 line-clamp-2">
-                    {course.title}
-                  </h3>
-                  <button
-                    onClick={(e) => handleDeleteCourse(course.id, e)}
-                    className="text-slate-400 hover:text-red-600 p-1 rounded-lg hover:bg-slate-50 transition-colors"
-                    title="Delete Course"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
-                    </svg>
-                  </button>
+                {/* Thumbnail */}
+                <div className="aspect-video w-full rounded-xl overflow-hidden bg-neutral-900 mb-4 border border-white/5 relative">
+                  <img
+                    src={course.thumbnail}
+                    alt={course.title}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                  <span className="absolute bottom-2 right-2 px-2 py-1 rounded bg-black/80 backdrop-blur-sm text-[10px] font-mono text-white">
+                    {course.videoCount} videos
+                  </span>
                 </div>
-                <p className="text-xs text-slate-500 mt-1">{course.channelTitle || 'YouTube Course'}</p>
+
+                <h3 className="font-editorial text-lg font-bold text-white line-clamp-2 group-hover:text-[#70e000] transition-colors">
+                  {course.title}
+                </h3>
               </div>
 
-              <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
-                <span className="font-medium text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md">
-                  {course.hoursPerWeek} hrs/week
-                </span>
-                <span>{course.totalWeeks} Weeks</span>
-                <span>Due: {course.completionDate || 'Flexible'}</span>
+              <div className="mt-6 pt-4 border-t border-white/5 space-y-3">
+                <div className="flex items-center justify-between text-xs font-mono text-neutral-400">
+                  <span className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-[#70e000]" />
+                    {course.hoursPerWeek} hrs/wk
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-[#70e000]" />
+                    {course.targetDate || 'Flexible'}
+                  </span>
+                </div>
+
+                {/* Progress bar */}
+                <div>
+                  <div className="flex justify-between text-[11px] font-mono text-neutral-400 mb-1">
+                    <span>Progress</span>
+                    <span className="text-white">{course.progressPercentage}%</span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
+                    <div
+                      className="h-full bg-[#70e000] rounded-full transition-all"
+                      style={{ width: `${course.progressPercentage}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end text-xs font-mono text-[#70e000] group-hover:translate-x-1 transition-transform pt-1">
+                  <span className="flex items-center gap-1">
+                    Open Syllabus <ArrowRight className="w-3.5 h-3.5" />
+                  </span>
+                </div>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       )}
