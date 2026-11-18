@@ -63,16 +63,23 @@ function buildFullPlanResponse(plan) {
   });
 
   // Weekly plan with populated videos
-  const weeklyPlansResponse = plan.weekly_plans.map(w => {
-    const topic = plan.topics.find(t => t.id === w.topic_id);
-    const tVideos = topic ? plan.videos.filter(v => topic.video_positions.includes(v.position)) : [];
-    const mins = w.estimated_minutes || 0;
+  const weeklyPlansResponse = (plan.weekly_plans || []).map(w => {
+    const topic = (plan.topics || []).find(t => t.id === w.topic_id || t.name === w.topic_name);
+    const tVideos = topic
+      ? (plan.videos || []).filter(v => topic.video_positions && topic.video_positions.includes(v.position))
+      : (plan.videos || []);
+    const topicSecs = tVideos.reduce((a, b) => a + (b.duration_seconds || 0), 0);
+    const mins =
+      w.estimated_minutes ||
+      (topic ? topic.estimated_effort_minutes : 0) ||
+      Math.round(topicSecs / 60) ||
+      0;
     const effortFormatted = mins >= 60 
       ? `${Math.floor(mins / 60)}h ${mins % 60}m` 
       : `${mins}m`;
 
     return {
-      id: w.id,
+      id: w.id || `week-${w.week_number}`,
       week_number: w.week_number,
       topic_id: w.topic_id,
       topic_name: w.topic_name || (topic ? topic.name : 'Module'),
@@ -81,12 +88,12 @@ function buildFullPlanResponse(plan) {
       estimated_minutes: mins,
       estimated_effort_formatted: effortFormatted,
       videos: tVideos.map(v => ({
-        id: v.id,
+        id: v.id || v.youtube_video_id,
         youtube_video_id: v.youtube_video_id,
         title: v.title,
         description: v.description,
-        duration_seconds: v.duration_seconds,
-        duration_formatted: formatDuration(v.duration_seconds),
+        duration_seconds: v.duration_seconds || 0,
+        duration_formatted: formatDuration(v.duration_seconds || 0),
         position: v.position,
         completed: !!v.completed
       }))

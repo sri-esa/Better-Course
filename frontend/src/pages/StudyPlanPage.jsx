@@ -34,105 +34,129 @@ const formatDuration = (seconds) => {
 const normalizePlan = (data) => {
   if (!data) return null;
 
-  const weeklyPlans = (data.weeks || []).map((week) => ({
-    id: `week-${week.week}`,
-    week_number: week.week,
-    topic_name: (week.topics || [])
-      .map((topic) => topic.name)
-      .filter(Boolean)
-      .join(', '),
-    deadline: week.end,
-    estimated_effort_formatted: formatHours(week.hours),
-    videos: (week.topics || []).flatMap((topic) =>
-      (topic.videos || []).map((video) => ({
-        id: video.youtube_video_id,
-        youtube_video_id: video.youtube_video_id,
-        title: video.title,
-        duration_seconds: video.duration_seconds,
-        duration_formatted: formatDuration(video.duration_seconds),
-        thumbnail_url: video.thumbnail_url,
-        completed: Boolean(video.completed),
-      }))
-    ),
-  }));
-
-  const topics = (data.topics || []).map((topic, index) => {
-    const topicVideoMap = new Map();
-
-    for (const week of data.weeks || []) {
-      for (const weekTopic of week.topics || []) {
-        if (weekTopic.topic_id !== topic.id) continue;
-
-        for (const video of weekTopic.videos || []) {
-          topicVideoMap.set(video.youtube_video_id, {
-            id: video.youtube_video_id,
-            youtube_video_id: video.youtube_video_id,
-            title: video.title,
-            duration_seconds: video.duration_seconds,
-            duration_formatted: formatDuration(video.duration_seconds),
-            thumbnail_url: video.thumbnail_url,
-            completed: Boolean(video.completed),
-          });
-        }
-      }
-    }
-
-    const topicVideos = Array.from(topicVideoMap.values());
-    const completedCount = topicVideos.filter(
-      (video) => video.completed
-    ).length;
-
-    return {
-      id: topic.id,
-      name: topic.name,
-      difficulty: topic.difficulty || 'INTERMEDIATE',
-      order_number: index + 1,
-      video_count: topic.video_count || topicVideos.length,
-      total_duration_formatted: formatDuration(
-        topicVideos.reduce(
-          (sum, video) => sum + (video.duration_seconds || 0),
-          0
-        )
+  // 1. Weekly Plans normalization
+  let weeklyPlans = [];
+  if (Array.isArray(data.weekly_plans) && data.weekly_plans.length > 0) {
+    weeklyPlans = data.weekly_plans.map((w, idx) => ({
+      id: w.id || `week-${w.week_number || idx + 1}`,
+      week_number: w.week_number || idx + 1,
+      topic_id: w.topic_id,
+      topic_name: w.topic_name || 'Study Module',
+      difficulty: w.difficulty || 'INTERMEDIATE',
+      deadline: w.deadline || '—',
+      estimated_effort_formatted:
+        w.estimated_effort_formatted ||
+        (w.estimated_minutes ? `${Math.round(w.estimated_minutes / 60)}h` : '—'),
+      videos: (w.videos || []).map((v) => ({
+        id: v.id || v.youtube_video_id,
+        youtube_video_id: v.youtube_video_id,
+        title: v.title,
+        duration_seconds: v.duration_seconds || 0,
+        duration_formatted: v.duration_formatted || formatDuration(v.duration_seconds),
+        thumbnail_url: v.thumbnail_url,
+        completed: Boolean(v.completed),
+      })),
+    }));
+  } else if (Array.isArray(data.weeks) && data.weeks.length > 0) {
+    weeklyPlans = data.weeks.map((week) => ({
+      id: `week-${week.week}`,
+      week_number: week.week,
+      topic_name: (week.topics || [])
+        .map((topic) => topic.name)
+        .filter(Boolean)
+        .join(', '),
+      deadline: week.end,
+      estimated_effort_formatted: formatHours(week.hours),
+      videos: (week.topics || []).flatMap((topic) =>
+        (topic.videos || []).map((video) => ({
+          id: video.youtube_video_id,
+          youtube_video_id: video.youtube_video_id,
+          title: video.title,
+          duration_seconds: video.duration_seconds,
+          duration_formatted: formatDuration(video.duration_seconds),
+          thumbnail_url: video.thumbnail_url,
+          completed: Boolean(video.completed),
+        }))
       ),
-      estimated_effort_formatted: formatHours(topic.effort_hours),
-      completion_percentage:
-        topicVideos.length > 0
-          ? Math.round((completedCount / topicVideos.length) * 100)
-          : 0,
-      completed_video_count: completedCount,
-      videos: topicVideos,
-    };
-  });
+    }));
+  }
+
+  // 2. Topics normalization
+  let topics = [];
+  if (Array.isArray(data.topics) && data.topics.length > 0) {
+    topics = data.topics.map((topic, index) => {
+      let topicVideos = Array.isArray(topic.videos) && topic.videos.length > 0 ? topic.videos : [];
+
+      // If topic.videos is empty, try to match from weeklyPlans
+      if (topicVideos.length === 0) {
+        const found = [];
+        for (const week of weeklyPlans) {
+          if (week.topic_id === topic.id || week.topic_name === topic.name) {
+            for (const v of week.videos || []) {
+              found.push(v);
+            }
+          }
+        }
+        if (found.length > 0) topicVideos = found;
+      }
+
+      const completedCount = topicVideos.filter((v) => v.completed).length;
+      const totalSecs =
+        topic.total_duration_seconds ||
+        topicVideos.reduce((sum, v) => sum + (v.duration_seconds || 0), 0);
+
+      const mins = topic.estimated_effort_minutes || Math.round(totalSecs / 60);
+
+      return {
+        id: topic.id || `topic-${index + 1}`,
+        name: topic.name,
+        difficulty: topic.difficulty || 'INTERMEDIATE',
+        order_number: topic.order_number || index + 1,
+        video_count: topic.video_count || topicVideos.length,
+        total_duration_formatted:
+          topic.total_duration_formatted || formatDuration(totalSecs),
+        estimated_effort_formatted:
+          topic.estimated_effort_formatted ||
+          formatHours(topic.effort_hours || mins / 60),
+        completion_percentage:
+          topic.completion_percentage != null
+            ? topic.completion_percentage
+            : topicVideos.length > 0
+            ? Math.round((completedCount / topicVideos.length) * 100)
+            : 0,
+        completed_video_count:
+          topic.completed_video_count != null
+            ? topic.completed_video_count
+            : completedCount,
+        videos: topicVideos,
+      };
+    });
+  }
 
   return {
     ...data,
-
-    playlist_title: data.playlist?.title || 'Study Plan',
-    playlist_thumbnail: null,
-
+    playlist_title: data.playlist_title || data.playlist?.title || 'Study Plan',
+    playlist_thumbnail: data.playlist_thumbnail || null,
     total_videos:
+      data.total_videos ||
       data.playlist?.video_count ||
       data.progress?.total_videos ||
       0,
-
-    total_duration_formatted: formatHours(
-      data.playlist?.total_watch_hours || 0
-    ),
-
+    total_duration_formatted:
+      data.total_duration_formatted ||
+      formatHours(data.playlist?.total_watch_hours || 0),
     estimated_study_effort_hours:
-      data.summary?.total_effort_hours || 0,
-
+      data.estimated_study_effort_hours ||
+      data.summary?.total_effort_hours ||
+      0,
     target_date_formatted:
+      data.target_date_formatted ||
       data.settings?.target_date ||
       data.summary?.completion_date ||
       '—',
-
-    hours_per_week: data.settings?.hours_per_week || 0,
-
-    is_feasible: data.summary?.feasible ?? true,
-
-    status: data.progress?.status || 'ON_TRACK',
-
+    hours_per_week: data.hours_per_week || data.settings?.hours_per_week || 0,
+    is_feasible: data.is_feasible ?? data.summary?.feasible ?? true,
+    status: data.status || data.progress?.status || 'ON_TRACK',
     topics,
     weekly_plans: weeklyPlans,
   };
