@@ -1,21 +1,23 @@
-# StudyFlow: AI-Powered Study Planner for YouTube Playlists
+# StudyFlow (BetterCourse): AI-Powered Study Planner for YouTube Playlists
 
-> Paste a YouTube study playlist. Get a structured topic breakdown, realistic effort estimation, and weekly deadlines you can actually follow.
+> Paste any YouTube study playlist. Get an AI-clustered topic breakdown, realistic effort estimation, weekly deadlines, user accounts with Google OAuth, and adaptive re-planning.
 
 ---
 
-## The Problem
+## What's New in the Unified MERN Release (`mern` branch)
 
-YouTube hosts exceptional free educational content, rivaling paid courses. However, learners face persistent organizational barriers: playlists offer no visibility into total study effort, no pacing structure, and no accountability. Students start with good intentions but quietly abandon courses when overwhelmed.
-
-## The Solution
-
-StudyFlow converts unstructured playlists into structured, guided curricula:
-1. **Metadata Ingestion**: Fetches video titles, durations, and descriptions via the YouTube Data API v3 while filtering deleted/private videos and live streams.
-2. **Topic Clustering**: Groups ordered videos into coherent topics using LLMs, sentence embeddings, or a hybrid approach.
-3. **Realistic Effort Estimation**: Multiplies raw watch time by difficulty factors (1.25x – 2.0x) to account for pausing, note-taking, and hands-on practice.
-4. **Deterministic Scheduling**: Packs topics into weekly blocks matching the student's available hours and target deadline without splitting topics unnecessarily.
-5. **Dynamic Progress & Re-planning**: Tracks lesson completion and adaptively re-schedules remaining work when students fall behind or change pace.
+1. **Unified Full-Stack Node.js + Express + React Architecture**:
+   - Single-domain deployment on Render: Express serves both the `/api/*` REST endpoints and the compiled React SPA.
+   - Zero CORS issues and single SSL certificate setup.
+2. **Native MongoDB User Accounts**:
+   - Secure registration & login with `bcryptjs` password hashing and JWT sessions.
+   - No vendor lock-in (no Firebase or Supabase required).
+3. **Google OAuth 2.0 (GAuth)**:
+   - One-click "Sign in with Google" verified securely via `google-auth-library`.
+4. **Persistent Course Library ("My Courses")**:
+   - Logged-in users have all their study plans and progress synced across devices.
+5. **Guest Mode**:
+   - Instant guest access without forced login (plans saved locally until signed in).
 
 ---
 
@@ -23,169 +25,123 @@ StudyFlow converts unstructured playlists into structured, guided curricula:
 
 ```mermaid
 flowchart TD
-    SPA["React SPA (Vite + Tailwind)"]
-    API["FastAPI Backend (/api)"]
-    YT["YouTube Data API v3"]
-    LLM["LLM Provider (Gemini / Fake)"]
-    DB[(SQLite / PostgreSQL)]
+    subgraph Client["Unified Client (React 19 + Tailwind v4)"]
+        SPA["Vite SPA (/ & /plan & /dashboard & /my-courses)"]
+        GAuth["Google Identity (@react-oauth/google)"]
+    end
 
-    SPA -- "POST /api/analyze" --> API
-    SPA -- "PATCH /api/plans/{id}/progress" --> API
-    SPA -- "POST /api/plans/{id}/replan" --> API
-    API -- "Fetch metadata & durations" --> YT
-    API -- "Topic Clustering & Naming" --> LLM
-    API -- "Persist playlists, plans & progress" --> DB
+    subgraph Server["Unified Backend (Node.js + Express)"]
+        API["Express Router (/api/*)"]
+        AuthMid["JWT & Google Auth Middleware"]
+        YT["YouTube Ingestion Service"]
+        Cluster["Gemini AI & Duration Clustering"]
+        Scheduler["Deterministic 7-Day Scheduler"]
+        StaticServe["Express Static File Handler (frontend/dist)"]
+    end
+
+    subgraph CloudServices["Cloud Infrastructure"]
+        Mongo[("MongoDB Atlas (Users, Plans, Progress)")]
+        Gemini["Google Gemini 1.5 Flash"]
+        YouTube["YouTube Data API v3"]
+    end
+
+    SPA --> API
+    SPA --> GAuth
+    StaticServe --> SPA
+    API --> AuthMid
+    API --> YT
+    API --> Cluster
+    API --> Scheduler
+    API --> Mongo
+    Cluster --> Gemini
+    YT --> YouTube
 ```
-
-Detailed design notes: [Architecture Document](docs/architecture.md).
 
 ---
 
-## Quickstart
+## Quickstart (Local Development)
 
 ### Prerequisites
-- Python 3.11+
 - Node.js 20+
+- npm 10+
 
-### 1. Backend Setup
+### 1. Install Dependencies
 ```bash
-cd backend
-
-# Create and activate virtual environment (optional)
-python -m venv venv
-# Windows:
-.\venv\Scripts\activate
-# Linux/macOS:
-source venv/bin/activate
-
-# Install dependencies
-pip install -e ".[dev]"
-
-# Configure environment
-cp .env.example .env
-# Set YOUTUBE_API_KEY and LLM_API_KEY in .env
-
-# Run database migrations
-python -m alembic upgrade head
-
-# Run backend tests
-python -m pytest
-
-# Start development server
-uvicorn app.main:app --reload --port 8000
-```
-Backend health check: `http://localhost:8000/api/health`
-
-### 2. Frontend Setup
-```bash
-cd frontend
-
-# Install dependencies
+# Install root (backend) dependencies
 npm install
 
-# Run frontend test scripts
-node scripts/check-scheduler.mjs
+# Install frontend dependencies
+cd frontend && npm install && cd ..
+```
 
-# Build production bundle
-npm run build
+### 2. Configure Environment (`.env`)
+Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
+```
+Key settings:
+- `PORT`: `5000`
+- `MONGODB_URI`: Your MongoDB Atlas connection string
+- `GOOGLE_CLIENT_ID`: Your Google OAuth 2.0 Web Client ID
+- `JWT_SECRET`: Any secure random secret string
 
-# Start development server
+### 3. Run Locally
+```bash
+# Run both Backend (port 5000) and Frontend (port 5173 with proxy):
 npm run dev
 ```
-Open `http://localhost:5173` in your browser.
+Open **`http://localhost:5173`** in your browser.
 
 ---
 
-## Environment Variables
+## How to Deploy to a Fresh Domain on Render
 
-### Backend (`backend/.env`)
+Because this is a unified full-stack application, you deploy **one single Web Service on Render**:
 
-| Variable | Default | Description |
-|---|---|---|
-| `YOUTUBE_API_KEY` | *(required in prod)* | YouTube Data API v3 key |
-| `DATABASE_URL` | `sqlite:///./studyflow.db` | Database connection URL |
-| `CORS_ORIGINS` | `http://localhost:5173` | Allowed CORS origins |
-| `LLM_PROVIDER` | `gemini` | `gemini` or `fake` |
-| `LLM_API_KEY` | `None` | API key for the chosen LLM provider |
-| `LLM_MODEL` | `gemini-1.5-flash` | LLM model identifier |
-| `CLUSTERING_METHOD` | `llm` | `llm`, `embeddings`, or `hybrid` |
-| `TARGET_TOPIC_HOURS` | `4.0` | Target watch time per topic |
-| `EFFORT_MULT_BEGINNER` | `1.25` | Effort multiplier for beginner topics |
-| `EFFORT_MULT_INTERMEDIATE` | `1.5` | Effort multiplier for intermediate topics |
-| `EFFORT_MULT_ADVANCED` | `2.0` | Effort multiplier for advanced topics |
-| `MAX_PLAYLIST_VIDEOS` | `500` | Maximum videos accepted per playlist |
-| `PLAYLIST_CACHE_HOURS` | `24` | Cache retention for playlist metadata |
-| `RATE_LIMIT_ANALYZE` | `10/minute` | Rate limit for analyze endpoint |
-| `TESTING` | `False` | Enables offline testing with mocks |
+### Step 1: Create Web Service on Render
+1. Log in to [dashboard.render.com](https://dashboard.render.com).
+2. Click **New +** $\to$ **Web Service**.
+3. Connect your GitHub repository (`Better-Course`) and select the **`mern`** branch.
+4. Set the following build and start configurations:
+   - **Runtime**: `Node`
+   - **Build Command**:
+     ```bash
+     npm install && npm run build
+     ```
+   - **Start Command**:
+     ```bash
+     node server/index.js
+     ```
 
-### Frontend (`frontend/.env`)
+### Step 2: Configure Environment Variables in Render
+In the Render Web Service settings $\to$ **Environment**, add:
+- `NODE_ENV` = `production`
+- `PORT` = `10000`
+- `MONGODB_URI` = `mongodb+srv://...` (your MongoDB Atlas connection string)
+- `MONGODB_DATABASE` = `bettercourse`
+- `JWT_SECRET` = `any_long_random_secret_string`
+- `GOOGLE_CLIENT_ID` = `330212907264-qc0uuld2o3jnjj8ksi0frtski141clsb.apps.googleusercontent.com`
+- `YOUTUBE_API_KEY` = (Optional: your YouTube Data API v3 key)
+- `GEMINI_API_KEY` = (Optional: your Google Gemini API key)
 
-| Variable | Default | Description |
-|---|---|---|
-| `VITE_API_URL` | *(empty = mock mode)* | Backend base URL (e.g. `http://localhost:8000`) |
-| `VITE_USE_MOCKS` | `false` | Force mock mode regardless of backend URL |
+### Step 3: Connect Your Custom Domain
+1. In your Render Web Service dashboard, go to **Settings** $\to$ **Custom Domains**.
+2. Click **Add Custom Domain** and enter your domain (e.g., `yourdomain.com` or `www.yourdomain.com`).
+3. Add the DNS records shown by Render to your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.):
+   - `CNAME` for `www` pointing to your Render app URL (`your-app.onrender.com`).
+   - `A` record for apex/root domain pointing to Render's IP address.
+4. Render automatically provisions and renews **free SSL/TLS (HTTPS)** certificates.
 
----
-
-## Running Tests
-
-### Backend Test Suite
-```bash
-cd backend
-python -m pytest
-```
-Runs 93 tests covering:
-- Deterministic study scheduler (28 passing invariant tests)
-- YouTube URL & duration parsing, pagination, filtering, quota handling
-- LLM, embeddings, and hybrid topic clustering (with FakeLLM fallback & windowing)
-- Effort calculation and video-to-week assignment invariants
-- Progress calculation and adaptive re-planning
-
-### Frontend Tests & Checks
-```bash
-cd frontend
-node scripts/check-scheduler.mjs
-npm run build
-```
+### Step 4: Update Google OAuth Settings
+Once your domain is live (e.g. `https://yourdomain.com`):
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) $\to$ **APIs & Services** $\to$ **Credentials**.
+2. Edit your OAuth 2.0 Web Client (`BetterCourse`).
+3. Under **Authorized JavaScript origins**, add:
+   - `https://yourdomain.com`
+   - `https://www.yourdomain.com`
+4. Click **Save**.
 
 ---
-
-## Clustering Evaluation Tooling
-
-To evaluate topic clustering methods (`llm`, `embeddings`, `hybrid`) on test playlists:
-```bash
-python scripts/eval_clustering.py --dry-run
-```
-Output report: [Clustering Evaluation Report](docs/clustering_eval_report.md).
-
----
-
-## Deployment Guide
-
-### Deploying Backend (Render / Railway)
-1. Set build command: `pip install -e . && python -m alembic upgrade head`
-2. Set start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-3. Configure environment variables in dashboard: `DATABASE_URL`, `YOUTUBE_API_KEY`, `LLM_API_KEY`, `CORS_ORIGINS`.
-4. Health check endpoint: `/api/health`.
-
-### Deploying Frontend (Vercel)
-1. Framework preset: Vite.
-2. Root directory: `frontend`.
-3. Set environment variable: `VITE_API_URL` = your deployed backend URL.
-4. `frontend/vercel.json` ensures client-side routing rewrites:
-   ```json
-   { "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }] }
-   ```
-
----
-
-## Documentation Links
-
-- [API Contract Specification](docs/api-contract.md)
-- [System Architecture](docs/architecture.md)
-- [User Guide](docs/user-guide.md)
-- [Clustering Evaluation Report](docs/clustering_eval_report.md)
 
 ## License
-
 MIT
