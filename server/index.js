@@ -24,6 +24,14 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
+// Request logger for visibility
+app.use((req, res, next) => {
+  if (req.url.startsWith('/api/')) {
+    console.log(`[API] ${req.method} ${req.url}`);
+  }
+  next();
+});
+
 // Rate Limiting
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,

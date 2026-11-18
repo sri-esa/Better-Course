@@ -231,6 +231,15 @@ router.get('/my-courses', requireAuth, async (req, res) => {
       }
     }
 
+    if (plans.length === 0) {
+      const apiRoutes = require('./api');
+      const allMemPlans = apiRoutes.getMemoryPlans ? apiRoutes.getMemoryPlans() : [];
+      plans = allMemPlans.filter(p => !p.userId || String(p.userId) === String(req.user.id) || String(p.userId) === String(req.user._id));
+      if (plans.length === 0 && allMemPlans.length > 0) {
+        plans = allMemPlans;
+      }
+    }
+
     return res.json({
       courses: plans.map((p) => {
         const completedVideos = (p.videos || []).filter((v) => v.completed).length;

@@ -362,4 +362,8 @@ router.post('/plans/:planId/replan', async (req, res) => {
   }
 });
 
+router.getMemoryPlans = function() {
+  return memoryPlans;
+};
+
 module.exports = router;
